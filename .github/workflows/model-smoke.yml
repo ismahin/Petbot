@@ -1,0 +1,31 @@
+name: Linux Mithi smoke test
+on: workflow_dispatch
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MITHI_THREADS: '1'
+      MITHI_CACHE_MB: '4'
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python cloud/build_models.py
+      - name: Real Bangla and English speech with resident-memory measurement
+        run: |
+          python - <<'PY'
+          import asyncio, json, resource
+          import app
+          from cloud import runtime
+          async def check():
+              for text in ('হ্যালো, আমি তোমার সঙ্গে বাংলায় কথা বলতে পারি।', 'Hello, I am ready to listen.'):
+                  audio = await runtime.pcm(text, 'malini', 100)
+                  assert len(audio) > 2400
+                  print(json.dumps({'pcm_bytes': len(audio), 'peak_rss_mib': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)}))
+          asyncio.run(check())
+          PY

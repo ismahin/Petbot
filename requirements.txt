@@ -1,3 +1,4 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 fastapi==0.163.1
+websockets==17.4
 -r cloud/requirements-linux.lock.txt
