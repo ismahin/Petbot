@@ -9,11 +9,14 @@
 namespace {
 std::atomic<uint32_t> deadline{0}, wakes{0};
 std::atomic<bool> enabled{false};
+std::atomic<session::Visual> visualState{session::Visual::Boot};
 portMUX_TYPE statusLock = portMUX_INITIALIZER_UNLOCKED;
 char status[96] = "Say Hey Deskter";
 SemaphoreHandle_t heavyWork = nullptr;
 }
 namespace session {
+void setVisual(Visual value) { visualState.store(value); }
+Visual visual() { return visualState.load(); }
 bool begin() { heavyWork=xSemaphoreCreateMutex(); return heavyWork != nullptr; }
 HeavyWork::HeavyWork() { xSemaphoreTake(heavyWork,portMAX_DELAY); }
 HeavyWork::~HeavyWork() { xSemaphoreGive(heavyWork); }

@@ -54,6 +54,7 @@ async def serve(socket, get_settings):
                     await message('tts',state='preparing')
             heartbeat_task=asyncio.create_task(heartbeat())
             try:
+                await message('tts',state='preparing')
                 await limit(identity,'voice-turn',10)
                 audio=runtime.wav((np.clip(samples,-1,1)*32767).astype('<i2').tobytes(),16000)
                 text=await provider.transcribe(audio)

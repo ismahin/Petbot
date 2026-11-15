@@ -2,6 +2,9 @@
 #include <cstdint>
 
 namespace session {
+enum class Visual : uint8_t { Boot, Idle, Connecting, Setup, Listening, Thinking, Speaking, Error };
+void setVisual(Visual value);
+Visual visual();
 bool begin();
 class HeavyWork {
 public:

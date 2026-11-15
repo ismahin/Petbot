@@ -23,7 +23,8 @@ as the framework. Never upload `cloud/private` or `server/private`.
 - `/xiaozhi/ota/`, `/xiaozhi/v1/`: Xiaozhi-compatible configuration and Opus WSS.
 - `/health`: lightweight status. `/api/docs`: request schemas.
 
-Vercel deployment has **not** been verified. Local rehearsal passed actual Groq
+The `robotpetbot` Vercel deployment and authenticated configuration endpoint
+have been verified. Local rehearsal passed actual Groq
 ASR, Groq reply generation and Mithi WAV synthesis. Cold starts and free-tier
 CPU/memory limits can cause delays or failures. This is an experiment, not an
 always-on service guarantee.
@@ -38,12 +39,14 @@ The existing Arduino firmware and LAN deployment remain available:
 ```
 
 Open `http://127.0.0.1:8787` or `Open-Deskter-Studio.cmd` for the local dashboard.
-Local speech/recognition use the PC; Groq supplies conversation. The uploaded
-robot is still configured for this LAN server, not a new cloud URL.
+Local speech/recognition use the PC; Groq supplies conversation. The Arduino companion can be provisioned for the public cloud or this LAN server
+over USB without compiling credentials into firmware.
 
 See [Arduino build/upload](arduino/README.md), [server setup](server/README.md),
 [Mithi implementation](server/MITHI.md) and [hardware](HARDWARE.md).
-The camera/ST7789 wiring and full-screen preview are preserved.
+The active firmware shows animated robot eyes for idle, listening, thinking and
+speaking, with a boot chime and scanned Wi-Fi hotspot setup. Camera capture and
+face detection are disabled; existing GPIO wiring is preserved.
 
 ## Secrets and models
 

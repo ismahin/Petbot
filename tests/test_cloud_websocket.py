@@ -60,6 +60,7 @@ class CloudWebSocketTests(unittest.TestCase):
                         message=json.loads(event['text']);messages.append(message)
                         if message.get('type')=='tts' and message.get('state')=='stop':break
                 self.assertTrue(audio)
+                self.assertEqual((messages[0]['type'],messages[0]['state']),('tts','preparing'))
                 self.assertTrue(any(m.get('type')=='stt' for m in messages))
                 self.assertEqual(messages[-1]['state'],'stop')
 

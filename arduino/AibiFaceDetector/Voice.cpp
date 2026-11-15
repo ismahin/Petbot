@@ -14,6 +14,8 @@
 #include <ctime>
 #include <cstring>
 #include <atomic>
+#include <cmath>
+#include <algorithm>
 #include "esp_app_format.h"
 #include "esp_chip_info.h"
 #include "esp_ota_ops.h"
@@ -50,7 +52,7 @@ std::atomic<uint32_t> playbackEpoch{0},playbackLastWrite{0},playbackDrops{0},pla
 std::atomic<bool> playbackFinished{true},playbackBusy{false};
 struct WifiRequest { char ssid[33],password[65]; };
 QueueHandle_t wifiRequests=nullptr;
-struct ServerRequest { char url[192],ca[1600],token[96],ntp[64]; uint64_t utc; bool restore; };
+struct ServerRequest { char url[192],ca[1600],token[257],ntp[64]; uint64_t utc; bool restore; };
 QueueHandle_t serverRequests=nullptr;
 StaticQueue_t serverQueueControl;
 OpusEncoder *encoder=nullptr;
@@ -67,7 +69,9 @@ uint32_t wifiStarted=0,nextConfig=0,activationAttempts=0,ttsEnded=0,helloStarted
 uint32_t audioSent=0,lastReport=0;
 std::atomic<uint32_t> audioReceived{0},audioErrors{0};
 std::atomic<int> wifiDisconnectReason{0};
+std::atomic<float> outputLevel{0};
 bool wifiWasConnected=false,scanPending=false;
+uint32_t scanFinishedAt=0;
 uint32_t lastWifiRetry=0;
 
 void status(const char *text) { session::setStatus(text); }
@@ -83,6 +87,7 @@ void playbackTask(void *) {
             opus_decoder_ctl(decoder,OPUS_RESET_STATE);
         }
         if(!wakeaudio::speaking()) {
+            outputLevel.store(0);
             // Drain obsolete packets without ever playing them into a new turn.
             xQueueReceive(playbackQueue,&packet,0);
             vTaskDelay(pdMS_TO_TICKS(5));continue;
@@ -108,6 +113,10 @@ void playbackTask(void *) {
             // remains free to receive the next frame while DMA plays this one.
             const size_t bytes=size_t(count)*sizeof(int16_t);
             if(speaker.write(reinterpret_cast<uint8_t *>(outputPcm),bytes)!=bytes) ++audioErrors;
+            uint64_t energy=0;
+            for(int i=0;i<count;++i) energy+=int64_t(outputPcm[i])*outputPcm[i];
+            outputLevel.store(std::min(1.f,float(std::sqrt(double(energy)/std::max(1,count))/5000.)));
+            session::setVisual(session::Visual::Speaking);
             playbackLastWrite.store(millis());++audioReceived;
         }
         playbackBusy.store(false);
@@ -130,8 +139,31 @@ void startPortal() {
     WiFi.mode(WIFI_AP_STA);
     if (!WiFi.softAP(setupSsid,setupPassword)) { status("Wi-Fi setup could not start"); return; }
     dns.start(53,"*",WiFi.softAPIP());
+    session::setVisual(session::Visual::Setup);
     portal.on("/",HTTP_GET,[] {
-        portal.send(200,"text/html; charset=utf-8",R"HTML(<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>Deskter Wi-Fi</title><style>body{font:18px system-ui;margin:40px auto;padding:0 22px;max-width:440px;background:#f5f5f5;color:#171717}input,button{box-sizing:border-box;width:100%;font:inherit;padding:12px;margin:8px 0 20px;border:1px solid #aaa;border-radius:8px}button{background:#16643d;color:white;border:0}label{display:block}</style><h1>Connect Deskter</h1><p>Enter your 2.4 GHz Wi-Fi details.</p><form method="post" action="/wifi"><label>Wi-Fi name<input name="ssid" maxlength="32" required autocomplete="off"></label><label>Wi-Fi password<input name="password" type="password" maxlength="64" autocomplete="off"></label><button>Connect</button></form><p>After connecting, check Deskter's display for the Xiaozhi activation code.</p></html>)HTML");
+        portal.send(200,"text/html; charset=utf-8",R"HTML(<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>Deskter Wi-Fi</title><style>body{font:17px system-ui;margin:36px auto;padding:0 22px;max-width:440px;background:#081419;color:#d8fafa}input,select,button{box-sizing:border-box;width:100%;font:inherit;padding:12px;margin:8px 0 18px;border:1px solid #357077;border-radius:12px}button{background:#63e5d6;color:#082c31;border:0}label{display:block}small{color:#9ec6c8}</style><h1>Welcome to Deskter</h1><p>Choose your 2.4 GHz Wi-Fi network.</p><button type="button" id="scan">Scan networks</button><p id="message" role="status">Finding nearby networks...</p><label>Nearby Wi-Fi<select id="networks"><option value="">Select a network</option></select></label><form method="post" action="/wifi"><label>Wi-Fi name<input id="ssid" name="ssid" maxlength="32" required autocomplete="off"></label><label>Password<input name="password" type="password" maxlength="64" autocomplete="off"></label><button>Connect Deskter</button></form><small>For a hidden network, type its name. Leave the password empty for an open network. Your password stays on Deskter.</small><script>
+const list=document.getElementById('networks'),msg=document.getElementById('message'),btn=document.getElementById('scan');
+list.onchange=()=>{document.getElementById('ssid').value=list.value;};
+let busy=false;
+async function scan(fresh=false){if(busy)return;busy=true;btn.disabled=true;msg.textContent='Scanning...';try{const r=await fetch('/scan'+(fresh?'?refresh=1':''),{cache:'no-store'});if(r.status===202){busy=false;setTimeout(()=>scan(),1200);return;}if(!r.ok)throw Error();const data=await r.json();list.replaceChildren(new Option('Select a network',''));const seen=new Set();data.networks.sort((a,b)=>b.rssi-a.rssi).forEach(n=>{if(!n.ssid||seen.has(n.ssid))return;seen.add(n.ssid);list.add(new Option(n.ssid+' ('+n.rssi+' dBm'+(n.secure?', secured':', open')+')',n.ssid));});msg.textContent=seen.size+' networks found';}catch(e){msg.textContent='Scan failed. Try again or enter the network name.';}busy=false;btn.disabled=false;}
+btn.onclick=()=>scan(true);scan();</script></html>)HTML");
+    });
+    portal.on("/scan",HTTP_GET,[] {
+        portal.sendHeader("Cache-Control","no-store");
+        int count=WiFi.scanComplete();
+        if(count==WIFI_SCAN_RUNNING) {portal.send(202,"application/json","{\"scanning\":true}");return;}
+        if((portal.hasArg("refresh") || !scanFinishedAt || millis()-scanFinishedAt>30000) && !scanPending) {
+            WiFi.scanDelete();scanFinishedAt=0;
+            const int result=WiFi.scanNetworks(true,false);
+            scanPending=result==WIFI_SCAN_RUNNING;
+            if(!scanPending && result<0) {portal.send(503,"application/json","{\"error\":\"scan failed\"}");return;}
+            portal.send(202,"application/json","{\"scanning\":true}");return;
+        }
+        if(count<0) {scanPending=false;portal.send(503,"application/json","{\"error\":\"scan failed\"}");return;}
+        scanPending=false;scanFinishedAt=millis();
+        JsonDocument result;auto networks=result["networks"].to<JsonArray>();
+        for(int i=0;i<count && i<30;++i) {auto n=networks.add<JsonObject>();n["ssid"]=WiFi.SSID(i);n["rssi"]=WiFi.RSSI(i);n["secure"]=WiFi.encryptionType(i)!=WIFI_AUTH_OPEN;}
+        String json;serializeJson(result,json);portal.send(200,"application/json",json);
     });
     portal.on("/wifi",HTTP_POST,[] {
         String name=portal.arg("ssid"),password=portal.arg("password");
@@ -154,6 +186,7 @@ void connectWifi() {
     WiFi.begin(wifiSsid.c_str(),wifiPassword.c_str()); wifiStarted=millis();
     lastWifiRetry=wifiStarted;
     ready=false; activating=false; nextConfig=0;
+    if(!portalActive) session::setVisual(session::Visual::Connecting);
     status("Connecting to your Wi-Fi...");
     Serial.println("VOICE connecting to saved Wi-Fi (credentials hidden)");
 }
@@ -254,7 +287,7 @@ void configureCloud() {
     protocolVersion=result["websocket"]["version"] | 1;
     if (protocolVersion<1 || protocolVersion>3) { status("Unsupported Xiaozhi audio version"); return; }
     if (!wsUrl.startsWith("wss://")) { status("Xiaozhi gave no secure WebSocket URL"); return; }
-    ready=true; status("Say Hey Deskter / Xiaozhi ready"); Serial.println("VOICE cloud settings ready (token hidden)");
+    ready=true; session::setVisual(session::Visual::Idle); status("Say Hey Deskter / server ready"); Serial.println("VOICE cloud settings ready (token hidden)");
     // Firmware/asset URLs are intentionally unused: retain this Arduino hardware build.
 }
 
@@ -264,7 +297,7 @@ void sendListening() {
     JsonDocument message; message["session_id"]=sessionId; message["type"]="listen";
     message["state"]="start"; message["mode"]="auto";
     String text; serializeJson(message,text); socketClient.sendTXT(text);
-    status("Listening...");
+    session::setVisual(session::Visual::Listening);status("Listening...");
 }
 
 uint16_t read16(const uint8_t *p) { return (uint16_t(p[0])<<8)|p[1]; }
@@ -281,7 +314,7 @@ void socketEvent(WStype_t type,uint8_t *data,size_t length) {
     } else if (type==WStype_DISCONNECTED) {
         ++playbackEpoch;playbackFinished.store(true);
         helloReady=false; ttsEnding=false; wakeaudio::setSpeaking(false); inputBytes=0;
-        status("Voice disconnected; reconnecting if awake"); Serial.println("VOICE WebSocket disconnected");
+        session::setVisual(session::Visual::Connecting);status("Voice disconnected; reconnecting if awake"); Serial.println("VOICE WebSocket disconnected");
     } else if (type==WStype_TEXT) {
         if(length>16384) { ++audioErrors; return; }
         JsonDocument message; if(deserializeJson(message,data,length)) return;
@@ -299,13 +332,14 @@ void socketEvent(WStype_t type,uint8_t *data,size_t length) {
             session::touch();
             if(state=="start") {
                 ++playbackEpoch;playbackLastWrite.store(0);playbackFinished.store(false);
-                wakeaudio::setSpeaking(true);ttsEnding=false;inputBytes=0;status("Speaking...");
+                wakeaudio::setSpeaking(true);ttsEnding=false;inputBytes=0;session::setVisual(session::Visual::Thinking);status("Preparing speech...");
             }
             else if(state=="stop") { playbackFinished.store(true);ttsEnding=true;ttsEnded=millis(); }
+            else if(state=="preparing" && !wakeaudio::speaking()) { session::touch();session::setVisual(session::Visual::Thinking); }
         } else if(kind=="stt") {
-            session::touch(); status("Heard you / thinking..."); Serial.println("VOICE real server transcription received (text not logged)");
+            session::touch(); session::setVisual(session::Visual::Thinking); status("Heard you / thinking..."); Serial.println("VOICE real server transcription received (text not logged)");
         } else if(kind=="alert" || kind=="error") {
-            const String text=message["message"] | "Xiaozhi service alert"; status(text.c_str());
+            const String text=message["message"] | "Voice service alert"; session::setVisual(session::Visual::Error);status(text.c_str());
         }
     } else if(type==WStype_BIN && helloReady && session::active() && wakeaudio::speaking()) {
         if(protocolVersion==2) {
@@ -339,7 +373,7 @@ void openSocket() {
     else socketClient.beginSslWithCA(authority.c_str(),port,path.c_str(),serverCa.c_str(),"");
     socketClient.setExtraHeaders(wsHeaders.c_str());
     wsStarted=true; helloReady=false; helloStarted=millis();
-    status("Connecting voice...");
+    session::setVisual(session::Visual::Connecting);status("Connecting voice...");
 }
 
 void transmitAudio() {
@@ -407,13 +441,33 @@ bool processServerConfig() {
             timeval clock{}; clock.tv_sec=request.utc; settimeofday(&clock,nullptr);
             preferences.putULong64("clock",request.utc);
         }
-        Serial.println("VOICE local server settings saved (TLS CA pinned; token hidden)");
+        Serial.println("VOICE selected server settings saved (verified TLS; token hidden)");
     }
     memset(&request,0,sizeof(request)); nextConfig=0; status("Connecting to selected voice server...");
     return true;
 }
 
+void bootChime() {
+    wakeaudio::setSpeaking(true);
+    constexpr float notes[]={523.25f,659.25f,783.99f,1046.50f};
+    int16_t pcm[240];
+    for(float note:notes) {
+        constexpr int samples=3360;
+        for(int offset=0;offset<samples;offset+=240) {
+            for(int i=0;i<240;++i) {
+                const float phase=float(offset+i)/samples;
+                const float envelope=std::min(1.f,phase*12.f)*std::pow(1.f-phase,1.8f);
+                pcm[i]=int16_t(6500.f*envelope*std::sin(6.2831853f*note*(offset+i)/24000.f));
+            }
+            speaker.write(reinterpret_cast<uint8_t *>(pcm),sizeof(pcm));
+        }
+    }
+    delay(80);wakeaudio::setSpeaking(false);wakeaudio::discardPcm();
+    Serial.println("VOICE boot chime complete");
+}
+
 void networkTask(void *) {
+    bootChime();
     // Exercise the actual codec on non-played synthetic PCM to check the MCU
     // codec path and stack before networking; this is not a conversation test.
     bool codecValid=true;
@@ -476,26 +530,16 @@ void networkTask(void *) {
         if(newWifi) { newWifi=false; connectWifi(); }
         const int reason=wifiDisconnectReason.exchange(0);
         if(reason) Serial.printf("VOICE Wi-Fi disconnected; reason=%d (201=no AP, 202=authentication failure, 15=handshake timeout)\n",reason);
-        if(scanPending) {
-            const int count=WiFi.scanComplete();
-            if(count!=WIFI_SCAN_RUNNING) {
-                bool found=false;
-                for(int i=0;i<count;++i) if(WiFi.SSID(i)==wifiSsid) {
-                    found=true; Serial.printf("VOICE configured Wi-Fi visible: channel=%d RSSI=%d dBm\n",WiFi.channel(i),WiFi.RSSI(i));
-                }
-                if(count>=0 && !found) Serial.println("VOICE configured Wi-Fi not found in 2.4 GHz scan");
-                WiFi.scanDelete(); scanPending=false;
-            }
-        }
         if(WiFi.status()!=WL_CONNECTED) {
             wifiWasConnected=false;
             if(wsStarted) { socketClient.disconnect(); wsStarted=false; helloReady=false; }
             wakeaudio::setSpeaking(false); ttsEnding=false; inputBytes=0;
+            session::setVisual(portalActive ? session::Visual::Setup : session::Visual::Connecting);
             if(!portalActive && wifiStarted && millis()-wifiStarted>25000) {
                 startPortal();
-                scanPending=WiFi.scanNetworks(true,true)==WIFI_SCAN_RUNNING;
+
             }
-            if(!wifiSsid.isEmpty() && !scanPending && millis()-lastWifiRetry>30000) {
+            if(!wifiSsid.isEmpty() && WiFi.scanComplete()!=WIFI_SCAN_RUNNING && millis()-lastWifiRetry>30000) {
                 lastWifiRetry=millis(); WiFi.reconnect();
                 Serial.println("VOICE retrying saved Wi-Fi");
             }
@@ -505,7 +549,7 @@ void networkTask(void *) {
             wifiWasConnected=true;
             Serial.printf("VOICE Wi-Fi connected; channel=%d RSSI=%d dBm; IP=%s\n",WiFi.channel(),WiFi.RSSI(),WiFi.localIP().toString().c_str());
         }
-        if(portalActive) { portal.stop(); dns.stop(); WiFi.softAPdisconnect(true); WiFi.mode(WIFI_STA); portalActive=false; }
+        if(portalActive) { portal.stop(); dns.stop(); WiFi.softAPdisconnect(true); WiFi.mode(WIFI_STA); portalActive=false; WiFi.scanDelete();scanPending=false;scanFinishedAt=0;session::setVisual(session::Visual::Connecting); }
         if(!clockStarted) {
             if(serverNtp.isEmpty()) configTime(0,0,"pool.ntp.org","time.cloudflare.com");
             else esp_sntp_stop();
@@ -535,6 +579,7 @@ void networkTask(void *) {
         } else {
             if(wsStarted) { socketClient.disconnect(); wsStarted=false; helloReady=false; wakeaudio::setSpeaking(false); }
             wakeaudio::discardPcm(); inputBytes=0;
+            if(ready) session::setVisual(session::Visual::Idle);
         }
         if(millis()-lastReport>=5000) {
             Serial.printf("VOICE wifi=%u ready=%u active=%u hello=%u tx=%lu rx=%lu errors=%lu stack_free=%u\n",
@@ -571,10 +616,11 @@ void pollSerial() {
                 ServerRequest request{};
                 request.restore=command["reset"] | false;
                 const String url=command["url"] | "",ca=command["ca"] | "",token=command["token"] | "",ntp=command["ntp"] | "";
+                const bool publicTls=command["public"] | false;
                 const bool valid=url.startsWith("https://") && url.length()<sizeof(request.url) && url.indexOf('\n')<0 && url.indexOf('\r')<0 &&
-                    ca.startsWith("-----BEGIN CERTIFICATE-----") && ca.length()<sizeof(request.ca) &&
+                    ((publicTls && ca.isEmpty()) || (!publicTls && ca.startsWith("-----BEGIN CERTIFICATE-----"))) && ca.length()<sizeof(request.ca) &&
                     token.length()>20 && token.length()<sizeof(request.token) && token.indexOf('\r')<0 && token.indexOf('\n')<0 &&
-                    ntp.length()>0 && ntp.length()<sizeof(request.ntp);
+                    ((publicTls && ntp.isEmpty()) || (!publicTls && ntp.length()>0)) && ntp.length()<sizeof(request.ntp);
                 if(request.restore || valid) {
                     url.toCharArray(request.url,sizeof(request.url)); ca.toCharArray(request.ca,sizeof(request.ca));
                     token.toCharArray(request.token,sizeof(request.token)); ntp.toCharArray(request.ntp,sizeof(request.ntp));
@@ -616,6 +662,10 @@ bool begin() {
     auto *audioStorage=static_cast<uint8_t *>(heap_caps_malloc(playbackQueueFrames*sizeof(PlaybackPacket),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(audioStorage) playbackQueue=xQueueCreateStatic(playbackQueueFrames,sizeof(PlaybackPacket),audioStorage,&playbackQueueControl);
     return wifiRequests && serverRequests && playbackQueue && xTaskCreatePinnedToCore(networkTask,"xiaozhi_voice",32768,nullptr,2,&networkHandle,1)==pdPASS;
+}
+float speakerLevel() {
+    const uint32_t last=playbackLastWrite.load();
+    return wakeaudio::speaking() && last && millis()-last<160 ? outputLevel.load() : 0.f;
 }
 unsigned stackFree() { return networkHandle ? uxTaskGetStackHighWaterMark(networkHandle) : 0; }
 }
