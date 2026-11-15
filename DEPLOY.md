@@ -17,6 +17,11 @@ functions require Fluid compute and large-function support.
 2. Keep the build command `python cloud/build_models.py` from `vercel.json`.
    Python 3.12 is selected by `.python-version`. Enable Fluid compute and set
    `VERCEL_SUPPORT_LARGE_FUNCTIONS=1`.
+   The repository also declares `fluid: true` and the non-secret flag in
+   `build.env` because the dashboard may show its system entry as read-only.
+   The model build prints whether the flag reaches the build process. Vercel
+   account/project eligibility still applies; repository configuration cannot
+   bypass a platform restriction. Prefer Project Settings when editable.
 3. Add these environment variables **before deploying**:
 
    | Variable | Purpose |

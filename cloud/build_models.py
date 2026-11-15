@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parent
 
 
 def main():
+    flag = os.getenv('VERCEL_SUPPORT_LARGE_FUNCTIONS')
+    state = 'enabled' if flag in ('1', 'true') else 'not configured' if flag is None else 'not enabled'
+    print('Large-functions build flag: '+state, flush=True)
     if os.getenv('MITHI_ENABLED', '1') == '0':
         return
     source = json.loads((ROOT/'model-source.json').read_text(encoding='utf8'))
