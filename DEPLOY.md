@@ -135,9 +135,15 @@ Real local rehearsal (requires the Mithi environment and private secrets):
 & "$env:LOCALAPPDATA\Deskter\venvs\mithi-py312\Scripts\python.exe" cloud/check_live.py --model-dir "$env:LOCALAPPDATA\Deskter\models\mithi-v1-edge"
 ```
 
-Dependencies were resolved for Linux x86_64 / Python 3.12 in
-`cloud/requirements-linux.lock.txt`. Linux build/runtime and Vercel deployment
-still need verification. Source checks cannot establish a successful deployment.
+Dependencies are pinned in a **flat root `requirements.txt`** for Vercel's
+requirements parser. The resolver reference is `cloud/requirements-linux.lock.txt`;
+the deployment manifest does not include it with `-r`.
+
+A full GitHub Actions Linux build installed the production dependencies, fetched
+verified assets, and generated real Bangla and English audio with a peak resident
+set of **1,017 MiB**. [Linux smoke-test run](https://github.com/ismahin/Petbot/actions/runs/43758430903).
+Vercel deployment still needs verification; runner measurements do not establish
+Vercel performance or memory usage.
 
 References: [Vercel FastAPI](https://vercel.com/docs/frameworks/backend/fastapi),
 [function limits](https://vercel.com/docs/functions/limitations),
