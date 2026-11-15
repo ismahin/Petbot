@@ -107,5 +107,33 @@ mic-read errors. Logs do not contain passwords or device keys.
 
 Emotion-controlled TTS quality and response latency remain properties of the
 server/model. Speaking animation follows real playback, not generated text or
-fake audio. Hardware appearance, boot sound and captive portal require physical
-verification; see the current task's runtime capture for tested behavior.
+fake audio. The owner confirmed the listening/thinking/speaking animations, boot chime,
+spoken open/close camera commands and visible green face box on 2026-11-16.
+
+## Validation on 2026-11-16
+
+- Final Arduino build and COM3 flash passed; application hash verified by esptool.
+  Image: 2,515,536 bytes, SHA256
+  `4f7cb8199292109265db897494f6012d83dee79a5a92e5177dcf481a6e320b25`.
+- Board authenticated to `robotpetbot.vercel.app` using the provisioned device
+  key. Public HTTPS configuration, authenticated WSS/Opus hello and real Mithi
+  WAV synthesis passed. Cloud API checks (14 tests) and Vercel deployment passed.
+- Eyes measured 29.2..29.6 FPS; camera measured about 10.3..11.1 FPS with local
+  phoneme recognition sharing core 0. Camera capture error count stayed zero.
+- Two real camera open/close cycles restored exactly 162,924 bytes free internal
+  heap and 5,741,072 bytes free PSRAM after each close. No MCU panic was captured.
+  Minimum internal heap reached 18,456 bytes during this short camera test;
+  this is not a long-run stability or power measurement. The core's camera
+  teardown emitted a GDMA disconnect warning; the second open and close worked.
+- On the actual board, the portal served its HTML, scanned 30 visible networks,
+  rejected invalid credentials, redirected captive probes and answered wildcard
+  DNS with 192.168.4.1. Phone auto-opening remains dependent on its OS.
+- The owner confirmed real spoken commands open the preview, show a green face
+  box, and close back to eyes; all action animations and the boot sound work.
+
+Ignored captures: `companion_build_final.log`, `companion_upload.log`,
+`companion_check.log`, `companion_runtime.log`. A trusted USB diagnostic can
+send `{"cmd":"setup","enabled":true}` to reopen setup for five minutes while
+Wi-Fi is connected; `enabled:false` closes it. `{"cmd":"info"}` reports the
+board's LAN IP, and `{"cmd":"camera","enabled":true}` controls camera mode for
+hardware diagnostics. None of these commands generate artificial detections.
