@@ -1,7 +1,7 @@
 # Deskter wake phrase and Xiaozhi voice
 
 **Historical integration notes:** the active companion firmware now uses animated
-eyes, a boot chime and scanned Wi-Fi setup, with camera/face detection disabled.
+eyes, a boot chime and scanned Wi-Fi setup, with camera/face detection available on demand by spoken command.
 See [current Arduino instructions](README.md) for cloud provisioning and operation.
 Face-preview measurements and official activation steps below describe earlier
 firmware, rather than the current private-cloud workflow.

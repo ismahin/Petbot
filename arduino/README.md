@@ -2,8 +2,10 @@
 
 The active sketch is `AibiFaceDetector/AibiFaceDetector.ino` (the existing folder
 name is retained for build/upload compatibility). It now displays animated robot
-eyes, with **no camera initialization, live preview or face-detection task**.
-Camera wiring is unchanged and can be restored from Git history.
+eyes, with **camera capture and face detection off by default**.
+Camera wiring is unchanged. Say **Hey Deskter, open camera** to open a full-screen
+320x240 preview with real face detection. Say **close camera** (or wake Deskter
+first if needed) to return to the animated eyes.
 
 ## Behavior
 
@@ -15,13 +17,24 @@ Camera wiring is unchanged and can be restored from Git history.
 - Offline: a captive Wi-Fi portal with asynchronous SSID scanning, manual hidden
   network entry and password submission. Credentials stay in device NVS.
 - Real **Hey Deskter** phoneme wake detection starts a cloud voice session.
+- Open/close camera commands have local phoneme matches, including a four-second
+  command window after the wake phrase, plus a strict cloud-transcription command
+  path during conversation. Ordinary questions about cameras do not toggle it.
+- Camera mode uses the previously working pretrained HumanFaceDetectMSR01 +
+  HumanFaceDetectMNP01 models, original Sense pinout, RGB565 and 24-pose orientation
+  search. Only real results above threshold draw green boxes and confidence.
+  Closing waits for inference to finish, deinitializes the camera and releases
+  model/snapshot/queue storage. It stays off on the next boot.
   The mic is suppressed during speaker playback (half-duplex; no echo cancellation).
 - A session returns to wake-word standby after 60 seconds without activity.
   Server preparation heartbeats and real audio extend the session.
 
 The display uses a 150 KiB PSRAM sprite and targets 30 FPS without blocking the
 network or microphone tasks. Actual frame rate is printed as `EYES fps`.
-No camera buffers or face-model scratch memory are allocated.
+Eye SPI updates are clipped to the animated area between full refreshes. Camera
+buffers and face-model scratch memory are allocated only while camera mode is open.
+While asleep in camera mode, local command detection shares core 0 with face
+inference; reacquisition/performance can differ from the earlier camera-only build.
 
 ## Hardware and dependencies
 

@@ -10,6 +10,7 @@ from fastapi import HTTPException, WebSocketDisconnect
 from cloud import provider, runtime
 from cloud.security import device, limit
 from cloud.storage import store
+from cloud.device_commands import camera_command
 
 ACTIVE = set()
 
@@ -61,7 +62,14 @@ async def serve(socket, get_settings):
                 if not text:
                     return
                 await message('stt',text=text)
-                reply=await provider.chat(text,history,current)
+                action=camera_command(text)
+                if action:
+                    await message('device',action=action)
+                    bangla=any('\u0980'<=c<='\u09ff' for c in text)
+                    confirmation=('ক্যামেরা চালু হচ্ছে।' if bangla else 'Opening the camera.') if action=='camera_open' else ('ক্যামেরা বন্ধ হচ্ছে।' if bangla else 'Closing the camera.')
+                    reply={'text':confirmation,'emotion':'neutral'}
+                else:
+                    reply=await provider.chat(text,history,current)
                 await message('llm',emotion=reply['emotion'])
                 chunks=JsonSpeechChunks(sentence_mode=True,split_commas=True,
                     first_sentence_words=current['first_phrase_words'],

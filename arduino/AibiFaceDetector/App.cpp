@@ -7,6 +7,8 @@
 #include "Session.hpp"
 #include "WakeAudio.hpp"
 #include "Voice.hpp"
+#include "CameraMode.hpp"
+#include "esp_heap_caps.h"
 
 SET_LOOP_TASK_STACK_SIZE(8192);
 #if !CONFIG_IDF_TARGET_ESP32S3 || !defined(BOARD_HAS_PSRAM)
@@ -32,7 +34,7 @@ const char *label(session::Visual state) {
         default:return "LET'S TRY AGAIN";
     }
 }
-void drawFace() {
+void drawFace(bool force=false) {
     using V=session::Visual;
     const uint32_t now=millis();const float t=now/1000.f;
     V state=session::visual();
@@ -87,7 +89,14 @@ void drawFace() {
         // Bounded ASCII diagnostics; credentials never enter the status string.
         detail[50]=0;frame.drawString(detail,160,222);
     } else frame.drawString("D E S K T E R",160,224);
-    frame.pushSprite(0,0);
+    static V previous=V::Error;
+    static uint32_t fullAt=0;
+    const bool full=force || state!=previous || now-fullAt>1000;
+    // Most frames only change eyes/mouth. Clip the SPI transfer to that area;
+    // keep a full PSRAM canvas so motion never leaves trails or flicker.
+    if(!full) lcd.setClipRect(32,48,256,140);
+    frame.pushSprite(0,0);lcd.clearClipRect();
+    if(full) {previous=state;fullAt=now;}
 }
 void fail(const char *message) {
     Serial.println(message);session::setStatus(message);session::setVisual(session::Visual::Error);
@@ -97,7 +106,8 @@ void fail(const char *message) {
 void appSetup() {
     Serial.begin(115200);delay(200);setCpuFrequencyMhz(settings::cpuMHz);
     if(!session::begin()) fail("Session memory init failed");
-    Serial.printf("\nDESKTER animated companion / reset=%d / camera and face inference disabled\n",int(esp_reset_reason()));
+    heap_caps_malloc_extmem_enable(4096);
+    Serial.printf("\nDESKTER animated companion / reset=%d / camera is on-demand only\n",int(esp_reset_reason()));
     if(!psramFound()) fail("Enable OPI PSRAM");
     digitalWrite(settings::sdCs,HIGH);pinMode(settings::sdCs,OUTPUT);
     if(!lcd.init()) fail("ST7789 initialization failed");
@@ -112,8 +122,9 @@ void appSetup() {
 void appLoop() {
     voice::pollSerial();
     static uint32_t nextFrame=0,lastReport=0,frames=0;
+    static bool wasCamera=false;
     const uint32_t now=millis();
-    if(int32_t(now-nextFrame)>=0) {nextFrame=now+33;drawFace();++frames;}
+    if(int32_t(now-nextFrame)>=0) {nextFrame=now+33;const bool camera=cameramode::render(lcd);if(!camera) drawFace(wasCamera);wasCamera=camera;++frames;}
     if(now-lastReport>=10000) {
         Serial.printf("EYES fps=%.1f state=%u heap=%u min_heap=%u psram=%u voice_stack=%u\n",
             frames*1000.f/(now-lastReport),unsigned(session::visual()),unsigned(ESP.getFreeHeap()),

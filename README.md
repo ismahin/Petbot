@@ -46,7 +46,9 @@ See [Arduino build/upload](arduino/README.md), [server setup](server/README.md),
 [Mithi implementation](server/MITHI.md) and [hardware](HARDWARE.md).
 The active firmware shows animated robot eyes for idle, listening, thinking and
 speaking, with a boot chime and scanned Wi-Fi hotspot setup. Camera capture and
-face detection are disabled; existing GPIO wiring is preserved.
+face detection are off by default; say "Hey Deskter, open camera" to enable
+full-screen preview and real face boxes, and "close camera" to return to eyes.
+Existing GPIO wiring is preserved.
 
 ## Secrets and models
 

@@ -28,6 +28,7 @@
 #include "Voice.hpp"
 #include "Session.hpp"
 #include "WakeAudio.hpp"
+#include "CameraMode.hpp"
 
 extern const uint8_t deskterCaStart[] asm("_binary_x509_crt_bundle_start");
 extern const uint8_t deskterCaEnd[] asm("_binary_x509_crt_bundle_end");
@@ -70,6 +71,8 @@ uint32_t audioSent=0,lastReport=0;
 std::atomic<uint32_t> audioReceived{0},audioErrors{0};
 std::atomic<int> wifiDisconnectReason{0};
 std::atomic<float> outputLevel{0};
+std::atomic<int> portalControl{0};
+uint32_t manualPortalUntil=0;
 bool wifiWasConnected=false,scanPending=false;
 uint32_t scanFinishedAt=0;
 uint32_t lastWifiRetry=0;
@@ -171,6 +174,7 @@ btn.onclick=()=>scan(true);scan();</script></html>)HTML");
             portal.send(400,"text/plain","Check the Wi-Fi name and password length."); return;
         }
         wifiSsid=name; wifiPassword=password;
+        manualPortalUntil=0;
         preferences.putString("ssid",wifiSsid); preferences.putString("pass",wifiPassword);
         newWifi=true;
         portal.send(200,"text/html","<meta name='viewport' content='width=device-width,initial-scale=1'><h2>Connecting Deskter</h2><p>Check its display. You can return your phone to your usual Wi-Fi.</p>");
@@ -336,6 +340,10 @@ void socketEvent(WStype_t type,uint8_t *data,size_t length) {
             }
             else if(state=="stop") { playbackFinished.store(true);ttsEnding=true;ttsEnded=millis(); }
             else if(state=="preparing" && !wakeaudio::speaking()) { session::touch();session::setVisual(session::Visual::Thinking); }
+        } else if(kind=="device") {
+            const String action=message["action"] | "";
+            if(action=="camera_open") cameramode::request(true);
+            else if(action=="camera_close") cameramode::request(false);
         } else if(kind=="stt") {
             session::touch(); session::setVisual(session::Visual::Thinking); status("Heard you / thinking..."); Serial.println("VOICE real server transcription received (text not logged)");
         } else if(kind=="alert" || kind=="error") {
@@ -518,6 +526,9 @@ void networkTask(void *) {
     uint32_t nextLocalClock=0;
     for(;;) {
         if(processServerConfig()) { clockStarted=false; nextLocalClock=0; }
+        const int portalCommand=portalControl.exchange(0);
+        if(portalCommand>0) {session::sleep();manualPortalUntil=millis()+300000;startPortal();}
+        else if(portalCommand<0) manualPortalUntil=0;
         WifiRequest request{};
         if(xQueueReceive(wifiRequests,&request,0)==pdTRUE) {
             const bool changed=wifiSsid!=request.ssid || wifiPassword!=request.password;
@@ -549,7 +560,7 @@ void networkTask(void *) {
             wifiWasConnected=true;
             Serial.printf("VOICE Wi-Fi connected; channel=%d RSSI=%d dBm; IP=%s\n",WiFi.channel(),WiFi.RSSI(),WiFi.localIP().toString().c_str());
         }
-        if(portalActive) { portal.stop(); dns.stop(); WiFi.softAPdisconnect(true); WiFi.mode(WIFI_STA); portalActive=false; WiFi.scanDelete();scanPending=false;scanFinishedAt=0;session::setVisual(session::Visual::Connecting); }
+        if(portalActive && (!manualPortalUntil || int32_t(millis()-manualPortalUntil)>=0)) { portal.stop(); dns.stop(); WiFi.softAPdisconnect(true); WiFi.mode(WIFI_STA); portalActive=false; WiFi.scanDelete();scanPending=false;scanFinishedAt=0;session::setVisual(session::Visual::Connecting); }
         if(!clockStarted) {
             if(serverNtp.isEmpty()) configTime(0,0,"pool.ntp.org","time.cloudflare.com");
             else esp_sntp_stop();
@@ -579,7 +590,7 @@ void networkTask(void *) {
         } else {
             if(wsStarted) { socketClient.disconnect(); wsStarted=false; helloReady=false; wakeaudio::setSpeaking(false); }
             wakeaudio::discardPcm(); inputBytes=0;
-            if(ready) session::setVisual(session::Visual::Idle);
+            if(ready && !portalActive && session::visual()!=session::Visual::Error) session::setVisual(session::Visual::Idle);
         }
         if(millis()-lastReport>=5000) {
             Serial.printf("VOICE wifi=%u ready=%u active=%u hello=%u tx=%lu rx=%lu errors=%lu stack_free=%u\n",
@@ -628,6 +639,12 @@ void pollSerial() {
                     if(serverRequests) xQueueOverwrite(serverRequests,&request);
                 } else Serial.println("USB server configuration rejected; check URL, CA, token and clock host");
                 memset(&request,0,sizeof(request));
+            } else if(parsed && command["cmd"]=="setup") {
+                portalControl.store((command["enabled"] | true) ? 1 : -1);
+            } else if(parsed && command["cmd"]=="info") {
+                Serial.printf("DEVICE station_ip=%s camera=%u\n",WiFi.localIP().toString().c_str(),unsigned(cameramode::requested()));
+            } else if(parsed && command["cmd"]=="camera" && command["enabled"].is<bool>()) {
+                cameramode::request(command["enabled"].as<bool>());
             } else if(parsed && command["cmd"]=="wifi") {
                 const String ssid=command["ssid"] | "",password=command["password"] | "";
                 if(!ssid.isEmpty() && ssid.length()<=32 && password.length()<=64 && (password.isEmpty() || password.length()>=8)) {

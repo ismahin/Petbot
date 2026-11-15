@@ -13,6 +13,7 @@
 #include "WakeAudio.hpp"
 #include "Settings.hpp"
 #include "Session.hpp"
+#include "CameraMode.hpp"
 
 namespace {
 I2SClass microphone;
@@ -44,6 +45,7 @@ void detectTask(void *) {
     uint64_t inferenceUs = 0, samples = 0, squares = 0;
     uint32_t chunks = 0, peak = 0, lastReport = millis();
     bool recognizing = false;
+    uint32_t commandUntil=0;
     for (;;) {
         auto *res = afe->fetch(afeData);
         if (!res || res->ret_value == ESP_FAIL || !res->data || res->data_size != fetchSamples*int(sizeof(int16_t))) {
@@ -59,7 +61,7 @@ void detectTask(void *) {
 
         // The phrase gate runs locally. While awake, reserve its NN time for
         // face inference and the real voice session; suppress TTS self-trigger.
-        if (!session::active() && !isSpeaking.load()) {
+        if ((!session::active() || int32_t(commandUntil-now)>0) && !isSpeaking.load()) {
             { // Continuous frames preserve the start of "Hey"; VAD is diagnostic.
                 recognizing = true;
                 const int64_t start = esp_timer_get_time();
@@ -72,8 +74,15 @@ void detectTask(void *) {
                         // MultiNet has already applied its detection decision.
                         // Its reported phrase score is not the threshold setter's
                         // scale; applying that threshold again rejected real matches.
-                        if (result->command_id[0] == 1 && std::isfinite(result->prob[0]))
+                        if (result->command_id[0] == 1 && std::isfinite(result->prob[0])) {
                             session::wake(result->prob[0]);
+                            commandUntil=now+4000; // Preserve the trailing "open camera" after Hey Deskter.
+                        } else if(std::isfinite(result->prob[0]) && (result->command_id[0]==2 || result->command_id[0]==3)) {
+                            cameramode::request(result->command_id[0]==2);
+                            commandUntil=0;
+                            // This local hardware command works without a cloud reply.
+                            session::sleep();
+                        }
                     }
                     multinet->clean(modelData); recognizing = false;
                 } else if (state == ESP_MN_STATE_TIMEOUT) {
@@ -110,7 +119,15 @@ bool begin() {
     // Arduino's official G2P alphabet: HH=h EY=d D=D EH=f S=S K=K T=T ER=k.
     // Literal Desk-ter plus Dexter pronunciation, both mapped to the same wake ID.
     if (esp_mn_commands_add(1,const_cast<char *>("hd DfSKTk")) != ESP_OK ||
-        esp_mn_commands_add(1,const_cast<char *>("hd DfKSTk")) != ESP_OK || esp_mn_commands_update()) return false;
+        esp_mn_commands_add(1,const_cast<char *>("hd DfKSTk")) != ESP_OK ||
+        esp_mn_commands_add(2,const_cast<char *>("bPcN KaMkc")) != ESP_OK ||
+        esp_mn_commands_add(2,const_cast<char *>("bPcN KaMRc")) != ESP_OK ||
+        esp_mn_commands_add(2,const_cast<char *>("hd DfSKTk bPcN KaMkc")) != ESP_OK ||
+        esp_mn_commands_add(2,const_cast<char *>("hd DfKSTk bPcN KaMkc")) != ESP_OK ||
+        esp_mn_commands_add(3,const_cast<char *>("KLbZ KaMkc")) != ESP_OK ||
+        esp_mn_commands_add(3,const_cast<char *>("KLbZ KaMRc")) != ESP_OK ||
+        esp_mn_commands_add(3,const_cast<char *>("hd DfSKTk KLbZ KaMkc")) != ESP_OK ||
+        esp_mn_commands_add(3,const_cast<char *>("hd DfKSTk KLbZ KaMkc")) != ESP_OK || esp_mn_commands_update()) return false;
     const int thresholdResult=multinet->set_det_threshold(modelData,settings::wakeThreshold);
     Serial.printf("AUDIO engine threshold setter returned %d\n",thresholdResult);
 
