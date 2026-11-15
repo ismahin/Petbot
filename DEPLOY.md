@@ -138,6 +138,10 @@ Real local rehearsal (requires the Mithi environment and private secrets):
 Dependencies are pinned in a **flat root `requirements.txt`** for Vercel's
 requirements parser. The resolver reference is `cloud/requirements-linux.lock.txt`;
 the deployment manifest does not include it with `-r`.
+CPU PyTorch uses its official, SHA256-pinned Linux wheel directly. The remaining
+packages resolve from PyPI; no PyTorch extra index or unsafe index strategy is
+needed. This avoids `uv` selecting outdated non-Torch dependencies from the
+PyTorch index.
 
 A full GitHub Actions Linux build installed the production dependencies, fetched
 verified assets, and generated real Bangla and English audio with a peak resident

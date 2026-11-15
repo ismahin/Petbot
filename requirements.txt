@@ -1,5 +1,4 @@
 # Pinned Linux / Python 3.12 cloud dependencies. Keep this file flat for Vercel.
---extra-index-url https://download.pytorch.org/whl/cpu
 addict==2.4.0
 annotated-doc==0.0.6
 annotated-types==0.8.0
@@ -87,7 +86,7 @@ sympy==1.14.0
 termcolor==3.3.0
 thinc==8.3.14
 tokenizers==0.23.3
-torch==2.11.0+cpu
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.11.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=f82e2ae20c1545bb03997d1cc3143d94e14b800038669ee1aca45808a9acc338
 tqdm==4.70.1
 transformers==5.23.0
 truststore==0.10.5
