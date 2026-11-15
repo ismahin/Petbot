@@ -1,0 +1,28 @@
+{
+  "repo": "Systran/faster-whisper-tiny",
+  "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+  "original": "openai/whisper-tiny",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "config.json",
+      "size": 2249,
+      "sha256": null
+    },
+    {
+      "path": "model.bin",
+      "size": 75538270,
+      "sha256": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+    },
+    {
+      "path": "tokenizer.json",
+      "size": 2203239,
+      "sha256": null
+    },
+    {
+      "path": "vocabulary.txt",
+      "size": 459861,
+      "sha256": null
+    }
+  ]
+}

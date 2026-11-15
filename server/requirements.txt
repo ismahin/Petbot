@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+httpx
+cryptography
+sherpa-onnx==2.0.1
+av
+scipy
+soundfile
+webrtcvad-wheels
+pyserial==3.5
+faster-whisper==1.2.1

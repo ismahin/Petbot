@@ -1,0 +1,22 @@
+{
+  "llm_provider": "groq",
+  "groq_model": "openai/gpt-oss-120b",
+  "groq_max_tokens": 384,
+  "first_phrase_words": 6,
+  "first_phrase_wait_ms": 900,
+  "following_phrase_words": 12,
+  "tts_backend": "mithi",
+  "english_asr": true,
+  "english_language_threshold": 0.75,
+  "english_mixed_threshold": 0.15,
+  "output_bitrate": 48000,
+  "playback_prefill_frames": 4,
+  "asr_threads": 2,
+  "vad_mode": 2,
+  "silence_ms": 400,
+  "max_utterance_seconds": 12,
+  "log_transcripts": false,
+  "mithi_voice": "malini",
+  "mithi_url": "http://127.0.0.1:1925",
+  "groq_strict_json": true
+}

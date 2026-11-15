@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Deskter Studio</title><link rel="stylesheet" href="/assets/style.css"><script src="/assets/app.js" defer></script></head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="#overview"><span class="brand-mark">d<span>••</span></span><span>deskter<span class="brand-sub">COMPANION STUDIO</span></span></a>
+  <div class="nav-label">YOUR WORKSPACE</div>
+  <nav aria-label="Settings sections">
+    <button data-page="overview" class="active"><span>◉</span> Overview</button>
+    <button data-page="personality"><span>✧</span> Personality</button>
+    <button data-page="voices"><span>≋</span> Voice library <small>10</small></button>
+    <button data-page="conversation"><span>☷</span> Conversation</button>
+    <button data-page="audio"><span>◷</span> Audio & listening</button>
+    <button data-page="devices" id="devices-nav" hidden><span>⌁</span> Devices & API</button>
+  </nav>
+  <div class="side-bottom"><div class="local-dot"></div><div>Made for your Deskter<small>Local control · Private settings</small></div></div>
+</aside>
+<div class="workspace">
+  <header><div class="breadcrumb">Workspace <span>/</span> <strong id="crumb">Overview</strong></div><div class="header-right"><span class="badge" id="server-badge">Connecting…</span><span class="avatar">M</span></div></header>
+  <main>
+    <div class="page-heading"><div><div class="eyebrow">DESKTER STUDIO</div><h1 id="page-title">A little companion.<br>A personality of your own.</h1><p id="page-description">Shape how Deskter thinks, speaks, and listens.</p></div><span class="outline-label">MITHI v1 EDGE</span></div>
+    <div id="load-error" class="notice error" role="alert" hidden></div>
+    <section data-section="overview">
+      <div class="hero"><div><span class="hero-kicker">YOUR COMPANION</span><h2>Hello, I’m Deskter.</h2><p>One familiar voice. A conversation<br>that feels a little more like you.</p><button class="dark-button" data-go="personality">Make it your own <span>↗</span></button></div><div class="robot-art" aria-hidden="true"><div class="antenna"></div><div class="robot-head"><div class="face"><i></i><i></i><b></b></div></div><div class="robot-shadow"></div><span class="art-star">✧</span></div></div>
+      <div class="stats"><article class="stat"><span class="stat-icon">◉</span><small>ROBOT CONNECTION</small><strong id="robot-status">Checking…</strong><p id="robot-detail">Waiting for server status</p></article><article class="stat"><span class="stat-icon">≋</span><small>SELECTED VOICE</small><strong id="current-voice">—</strong><p>Mithi · Bangla & English</p></article><article class="stat"><span class="stat-icon">✧</span><small>CONVERSATION ENGINE</small><strong id="current-provider">—</strong><p id="current-model">Checking…</p></article></div>
+      <div class="overview-bottom"><article class="card"><span class="eyebrow">START WITH PERSONALITY</span><h2>Your words, its character.</h2><p>Give Deskter a role, a conversational style, and a few things to remember about you.</p><button class="text-button" data-go="personality">Edit system prompt →</button></article><article class="card soft-card"><span class="eyebrow">FIND YOUR VOICE</span><h2>Ten voices. Your favorite.</h2><p>Listen to Mithi’s voice library in Bangla or English before choosing the one that fits.</p><button class="text-button" data-go="voices">Explore voice library →</button></article></div>
+      <p class="footnote">Speech and recognition run on this PC. Groq conversation uses the internet. This dashboard is accessible only from this PC.</p>
+    </section>
+    <section data-section="personality" hidden>
+      <div class="card"><div class="card-heading"><div><h2>System prompt</h2><p>The character behind every conversation.</p></div><span class="tag">YOUR COMPANION’S INSTRUCTIONS</span></div><label for="system_prompt">Tell Deskter who it is and how it should respond</label><textarea id="system_prompt" rows="16" maxlength="16000" spellcheck="false"></textarea><div class="field-footer"><span>Supports বাংলা, English, and Banglish.</span><span id="prompt-count">0 / 16,000</span></div><div class="notice">Try including its name, your preferred tone, language, and reply length. Spoken replies keep the required structured format automatically.</div></div>
+      <div class="card"><h2>Conversational style</h2><div class="form-grid"><div><label for="response_language">Reply language</label><select id="response_language"><option value="auto">Match the conversation</option><option value="bn">বাংলা · Bangla</option><option value="en">English</option><option value="bn-en">Banglish · বাংলা + English</option></select><p class="hint">Bangla words use Bengali script for clearer pronunciation.</p></div><div><label for="backchannels">Natural acknowledgments</label><select id="backchannels"><option value="auto">Let the LLM choose when useful</option><option value="off">Answer directly, without fillers</option></select><p class="hint">Short responses like “আচ্ছা” or “I see,” only when appropriate.</p></div></div></div>
+    </section>
+    <section data-section="voices" hidden>
+      <div class="card preview-card"><div><h2>Hear it before you choose.</h2><p>Preview any voice through your PC’s speakers. Selection applies to the robot after saving.</p></div><label for="preview-text">Preview text</label><textarea id="preview-text" rows="2" maxlength="300">হ্যালো মাহিন, আমি ডেস্কটার। আজ তোমার দিনটা কেমন গেল?</textarea><div class="preview-toolbar"><button class="sample-button" id="sample-bn">বাংলা sample</button><button class="sample-button" id="sample-en">English sample</button><span id="preview-status" role="status">Let the robot return to waiting before previewing.</span></div><audio id="preview-audio" controls hidden></audio></div>
+      <div id="voice-grid" class="voice-grid" aria-label="Mithi voices"></div>
+      <div class="notice">Mithi supports Bangla, English, and mixed text. It does not support learned happy/angry voice conditioning. LLM emotion labels can still control robot expressions.</div>
+    </section>
+    <section data-section="conversation" hidden>
+      <div class="card"><h2>Language model</h2><p>Your existing API credential stays private and is never sent to this page.</p><div class="form-grid"><div><label for="groq_model">Groq model ID</label><input id="groq_model" maxlength="120" placeholder="openai/gpt-oss-120b"><p class="hint">Applies when the server uses Groq. Enter an ID supported by your account.</p></div><div><label for="temperature">Creativity <output data-output="temperature"></output></label><input id="temperature" type="range" min="0" max="1" step="0.05"><p class="hint">Lower keeps replies focused. Higher adds variety.</p></div><div><label for="groq_max_tokens">Groq reply token limit</label><input id="groq_max_tokens" type="number" min="64" max="1024" step="1"><p class="hint">Longer replies take more time to generate and speak.</p></div></div></div>
+      <div class="card"><h2>Speech chunking</h2><p>Generate the next phrase while the robot plays the current one.</p><div class="form-grid"><div><label for="first_phrase_words">Opening phrase word limit</label><input id="first_phrase_words" type="number" min="4" max="16"><p class="hint">6 is a good starting point for quicker first audio.</p></div><div><label for="following_phrase_words">Following phrase word limit</label><input id="following_phrase_words" type="number" min="6" max="24"><p class="hint">12 keeps a balance between flow and generation time.</p></div></div></div>
+    </section>
+    <section data-section="audio" hidden>
+      <div class="card"><h2>Playback</h2><div class="form-grid"><div><label for="speech_volume">Speech volume <output data-output="speech_volume"></output></label><input id="speech_volume" type="range" min="0" max="100" step="1"><p class="hint">100% retains the current maximum digital level.</p></div><div><label for="playback_prefill_frames">Playback prebuffer</label><select id="playback_prefill_frames"><option value="1">1 frame · 60 ms</option><option value="2">2 frames · 120 ms</option><option value="3">3 frames · 180 ms</option><option value="4">4 frames · 240 ms (recommended)</option></select><p class="hint">More prebuffer can help smooth network playback.</p></div><div><label for="output_bitrate">Opus audio bitrate</label><select id="output_bitrate"><option value="24000">24 kbps</option><option value="32000">32 kbps</option><option value="48000">48 kbps (recommended)</option><option value="64000">64 kbps</option></select><p class="hint">Mono, 24 kHz. The board’s amplifier gain stays unchanged.</p></div></div></div>
+      <div class="card"><h2>Listening & pauses</h2><p>These settings apply when the next listening window starts.</p><div class="form-grid"><div><label for="silence_ms">End-of-speech silence (ms)</label><input id="silence_ms" type="number" min="200" max="1600" step="20"><p class="hint">A shorter pause responds faster but may cut off your thought.</p></div><div><label for="max_utterance_seconds">Maximum utterance (seconds)</label><input id="max_utterance_seconds" type="number" min="5" max="30"><p class="hint">The longest single question before recognition starts.</p></div><div><label for="vad_mode">Voice activity filtering</label><select id="vad_mode"><option value="0">0 · Least aggressive</option><option value="1">1 · Light filtering</option><option value="2">2 · Balanced (current default)</option><option value="3">3 · Most aggressive</option></select><p class="hint">Aggressive filtering rejects noise but can miss quiet speech.</p></div></div><label class="check-row" id="transcript-row"><input id="log_transcripts" type="checkbox"><span>Save recognized speech and replies in server logs<small>Off by default. Enable only when you need text diagnostics.</small></span></label></div>
+      <div class="notice">Wake phrase “Hey Deskter,” face models, GPIO wiring, Wi-Fi, certificates, and CPU thread counts remain managed by the existing firmware and server tools.</div>
+    </section>
+    <section data-section="devices" hidden>
+      <div class="card"><h2>Connect any ESP</h2><p>Use a separate API key for each device. The Groq and admin keys stay on the server.</p>
+      <label for="api-base">API base URL</label><input id="api-base" readonly>
+      <div class="notice">REST: /api/v1/chat · /api/v1/transcribe · /api/v1/speech<br>Xiaozhi: /xiaozhi/ota/ and /xiaozhi/v1/<br>Authentication: Authorization: Bearer YOUR_DEVICE_KEY</div>
+      <label for="device-name">Device name</label><input id="device-name" maxlength="64" placeholder="Desk robot"><button class="primary" id="create-device">Create device key</button>
+      <div id="new-device" class="notice" hidden><strong>Save this key now. It is shown only once.</strong><textarea id="new-device-key" readonly rows="2" spellcheck="false"></textarea><button id="dismiss-key" class="secondary">I have saved the key</button></div>
+      <div id="device-list"></div><p id="device-error" role="status"></p>
+      </div>
+      <div class="notice">Keep keys out of source control. Revoke a device key if it is lost. The bootstrap device key is managed in Vercel environment variables.</div>
+    </section>
+    <footer class="save-bar"><div><strong id="save-state">All changes saved</strong><small id="save-description">Your companion, configured on your PC.</small></div><div><button id="discard" class="secondary" disabled>Discard changes</button><button id="save" class="primary" disabled>Save changes <span>↗</span></button></div></footer>
+  </main>
+</div>
+<div id="login-screen" class="login-screen" hidden><form id="login-form" class="card login-card"><div class="eyebrow">DESKTER CLOUD</div><h2>Welcome to your Studio.</h2><p>Sign in with the admin key you set in the server environment.</p><label for="admin-key">Admin key</label><input id="admin-key" type="password" autocomplete="current-password" required maxlength="256"><p id="login-error" role="alert"></p><button class="primary" id="login-submit" type="submit">Open Studio →</button></form></div>
+<div class="toast" role="status" id="toast" hidden></div>
+</body></html>

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "fastapi",
+  "buildCommand": "python cloud/build_models.py",
+  "functions": {
+    "app.py": {
+      "maxDuration": 300,
+      "includeFiles": "{cloud/**,server/web/**,server/persona.txt,server/groq_llm.py,server/expression.py,server/text_chunks.py,server/audio.py,server/mithi_cached_writer.py,server/speech_audio.py,server/dashboard.py,server/mithi_speech.py}",
+      "excludeFiles": "{arduino/**,server/.venv/**,server/models/**,server/private/**,cloud/private/**,server/diagnostics/**,server/logs/**,tests/**,**/__pycache__/**}"
+    }
+  }
+}

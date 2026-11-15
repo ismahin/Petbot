@@ -1,0 +1,15 @@
+transformers==5.23.0
+misaki[en]==0.9.4
+espeakng-loader==0.2.4
+phonemizer-fork==3.3.2
+spacy==3.8.18
+num2words==0.5.14
+sentencepiece==0.2.3
+safetensors==0.8.0
+numpy==2.5.4
+soundfile==0.14.0
+scipy==1.18.1
+fastapi==0.163.1
+uvicorn==0.54.0
+httpx==0.28.1
+pip==26.3

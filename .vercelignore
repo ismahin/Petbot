@@ -1,0 +1,13 @@
+.git/
+.env
+.env.*
+**/private/
+server/.venv/
+server/models/
+server/logs/
+server/diagnostics/
+arduino/
+**/__pycache__/
+tests/
+*.zip
+*.bin

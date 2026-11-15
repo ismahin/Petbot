@@ -1,0 +1,62 @@
+{
+  "repo": "Oomni/mithi-v1-edge",
+  "revision": "c211c7e6a3dbf57159318b83d2543204980bb905",
+  "model_dir": "C:\\Users\\ismahin\\AppData\\Local\\Deskter\\models\\mithi-v1-edge",
+  "files": [
+    {
+      "file": "LICENSE",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "file": "README.md",
+      "size": 5946,
+      "sha256": "f6d23d86015987118503d47f27ab8b0265e36cc4b67302da0ffe9eab7e73acd8"
+    },
+    {
+      "file": "config.json",
+      "size": 3787,
+      "sha256": "7454ea366ab9e58a5d671a64f063df28657206199c493fc8c90c5d662ab90dcf"
+    },
+    {
+      "file": "decoder.safetensors",
+      "size": 19736732,
+      "sha256": "69b5f20939c3f55b1f239ca029bcd5c316befbf4b60b7b4bf6d1c1b0992f2470"
+    },
+    {
+      "file": "indic_encoder/config.json",
+      "size": 763,
+      "sha256": "4b750e58ef4f52e4fe7c218243af6ba0e3ebf65bb0bb2f76c316fd113a69db3e"
+    },
+    {
+      "file": "indic_encoder/model.safetensors",
+      "size": 12011104,
+      "sha256": "19665613cdaeac7611eb391b56f8183c3737ad640dbb477f08d396cc5b05e96d"
+    },
+    {
+      "file": "indic_encoder/old2new.npy",
+      "size": 1600128,
+      "sha256": "5aafbba764e27ff63fad04dbb5a297cc00fb01cb63b29a0efcd4a532a8d3aa54"
+    },
+    {
+      "file": "indic_encoder/spiece.model",
+      "size": 5646064,
+      "sha256": "3a1173c2b6e144a02c001e289a05b5dbefddf247c50d4dcf42633158b2968fcb"
+    },
+    {
+      "file": "run.py",
+      "size": 358174,
+      "sha256": "5147c3e72e0340c65dff0e148a8019c21dc4b94c5dd475ea42b4518534ed606d"
+    },
+    {
+      "file": "voices.safetensors",
+      "size": 5840,
+      "sha256": "f4412a2acff7e3791369220d1914f084647e44f2e56b6b5fe9682ee75d8311cb"
+    },
+    {
+      "file": "writer.safetensors",
+      "size": 7020676,
+      "sha256": "5e477026bb35bca514d6f977eb6fc5c2f8b0561537d77d25f37dbcebfaa6755f"
+    }
+  ]
+}
