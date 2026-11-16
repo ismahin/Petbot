@@ -40,7 +40,7 @@ class CloudWebSocketTests(unittest.TestCase):
             def feed(self,pcm): return np.zeros(16000,np.float32)
         packet=next(iter(OpusOutput(rate=16000).encode(np.zeros(960,dtype='<i2'))))
         headers={'Authorization':'Bearer '+os.environ['DESKTER_DEVICE_KEY']}
-        with patch('cloud.provider.transcribe',AsyncMock(return_value='A test question')),\
+        with patch('cloud.provider.recognize',AsyncMock(return_value={'text':'A test question','metadata':{'model':'whisper-large-v3'}})),\
              patch('cloud.provider.chat',AsyncMock(return_value={'text':'A test reply.','emotion':'neutral'})),\
              patch('cloud.runtime.pcm',AsyncMock(return_value=np.zeros(2400,dtype='<i2').tobytes())),\
              patch('audio.Utterances',Segmenter),TestClient(app) as client:

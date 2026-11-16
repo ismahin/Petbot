@@ -102,3 +102,5 @@ weasel==1.0.1
 webrtcvad-wheels==2.0.14.post1
 websockets==17.4
 wrapt==2.5.2
+
+asyncpg==0.32.0

@@ -144,7 +144,7 @@ bool begin() {
     feedSamples=afe->get_feed_chunksize(afeData); fetchSamples=afe->get_fetch_chunksize(afeData);
     if (feedSamples <= 0 || fetchSamples != multinet->get_samp_chunksize(modelData) || afe->get_total_channel_num(afeData) != 1) return false;
     feedBuffer=static_cast<int16_t *>(heap_caps_malloc(feedSamples*sizeof(int16_t),MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
-    constexpr size_t queueBytes=16000; // Half a second at 16 kHz mono PCM16.
+    constexpr size_t queueBytes=640000; // Bounded 20-second question buffer during a cold WSS handshake.
     auto *storage=static_cast<uint8_t *>(heap_caps_malloc(queueBytes+1,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if (!feedBuffer || !storage) return false;
     outgoing=xStreamBufferCreateStatic(queueBytes+1,1,storage,&outgoingControl);

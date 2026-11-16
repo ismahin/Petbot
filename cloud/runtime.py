@@ -55,6 +55,11 @@ def load():
     return model
 
 
+def preload():
+    with LOCK:
+        return load()
+
+
 def synthesize(text, voice, volume):
     import numpy as np
     import torch

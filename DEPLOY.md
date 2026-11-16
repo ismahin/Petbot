@@ -29,7 +29,8 @@ functions require Fluid compute and large-function support.
    | `GROQ_API_KEY` | Your Groq credential; used for both ASR and conversation |
    | `DESKTER_ADMIN_KEY` | Random secret of at least 32 characters for Studio login |
    | `DESKTER_DEVICE_KEY` | Different random secret of at least 32 characters; bootstrap ESP API key |
-   | `KV_REST_API_URL` | HTTPS endpoint for Redis-compatible REST storage |
+   | `DATABASE_URL` | Encrypted PostgreSQL URI (Aiven); shared settings, device keys, conversation history and diagnostic audio |
+   | `KV_REST_API_URL` | Optional legacy Redis REST endpoint for settings and device keys |
    | `KV_REST_API_TOKEN` | Server-only Redis REST credential |
    | `VERCEL_SUPPORT_LARGE_FUNCTIONS` | `1` |
    | `MITHI_THREADS` | `1` |
@@ -41,28 +42,30 @@ functions require Fluid compute and large-function support.
    On a fresh clone, `python cloud/make_keys.py` creates new admin/device keys;
    add your own Groq key separately.
 
-4. Add a Redis REST database (for example an Upstash integration). Its URL/token
-   provide durable settings, hashed device keys, global request limits and
-   short-lived WebSocket history. Without it, the bootstrap device API and
-   default settings work, but **saving settings / creating extra keys is disabled**;
-   throttling is only per instance and reconnect history is not durable.
+4. Set `DATABASE_URL` from your PostgreSQL service, including `sslmode=require`
+   (or `verify-full` with the service CA). The app creates only its own `deskter`
+   schema and uses at most two pooled connections per instance. With no shared
+   database, settings/key management is unavailable and conversation logs are
+   temporary and may be absent across different Vercel instances.
 5. Deploy. The build downloads only pinned, checksum-verified Mithi assets from
    Hugging Face. No model download is attempted inside a live request.
 6. Visit `https://YOUR_PROJECT.vercel.app/health`, then open `/` and sign in with
-   `DESKTER_ADMIN_KEY`. Choose a voice and preview it. The first preview is cold
-   and can take substantially longer than subsequent requests.
+   `DESKTER_ADMIN_KEY`. Choose a voice and preview it. Mithi preloads during
+   instance startup. Vercel can still recycle idle instances; a replacement
+   instance incurs another cold start. The PC/VPS alternative is needed for a
+   strict always-loaded guarantee.
 7. Open **Devices & API**, create a key for each ESP, and copy its key immediately.
    The full key is shown once. Revoke keys from the same page. The environment
    bootstrap key must be rotated in Vercel rather than through the device list.
 
-No Vercel deployment was performed automatically: importing the repository and
-setting your Vercel/Redis environment variables are still required.
+The `robotpetbot` project has been deployed and authenticated against the board.
+Database credentials remain Vercel environment variables, outside Git.
 
 ## Memory and latency design
 
 - CPU-only PyTorch; no CUDA, Ollama, local recognition models, separate TTS
-  process, or model loading during health checks and text-only requests.
-- One lazy Mithi model per instance, one speech generation at a time, one CPU
+  process. Cold instance startup preloads Mithi before the app serves requests.
+- One resident Mithi model per running instance, one speech generation at a time, one CPU
   thread by default, existing prosody KV caching and a 4 MiB PCM cache.
 - Maximum two active WebSocket sessions per instance; no unbounded task queues.
   Speech production/playback overlap through a two-item queue.
@@ -70,10 +73,13 @@ setting your Vercel/Redis environment variables are still required.
   capped at 1.1 MB. Speech requests allow 300 characters; conversation history
   holds at most eight messages. No base64 audio expansion in JSON responses.
 - WebSockets close by 240 seconds so clients can reconnect before Vercel's
-  300-second function deadline. Redis history expires after one hour. Active
+  300-second function deadline. Reconnection context expires after one hour. Active
   inference cannot survive instance termination; requests may need retrying.
-- No conversation transcripts are logged by the cloud app. The transcript toggle
-  in the shared local UI is hidden on cloud deployments.
+- Private conversation diagnostics are visible only to the Studio admin. The
+  latest 50 turns expire after 24 hours; short input/generated-audio clips
+  (up to 12 seconds) are retained for the latest 10 turns for one hour.
+  Conversation and audio capture can be disabled separately. Clear history
+  deletes the diagnostic rows and their audio, not settings or API keys.
 
 A local Windows rehearsal passed actual Groq ASR -> Groq LLM -> lazy Mithi ->
 24 kHz WAV: ASR 1.145 s, LLM 0.605 s, cold TTS 11.741 s, about 949 MiB working
@@ -93,7 +99,7 @@ Authorization: Bearer YOUR_DEVICE_API_KEY
 
 | Method/path | Request | Result |
 |---|---|---|
-| `GET /health` | None | Lightweight configuration/model status; no model warmup |
+| `GET /health` | None | Configuration/model status; a cold instance preloads before serving |
 | `GET /api/v1/voices` | Device authorization | Ten voice IDs and format |
 | `POST /api/v1/chat` | JSON `text`, optional `history` | JSON `text` and `emotion` |
 | `POST /api/v1/transcribe` | Raw WAV body; mono PCM16, 16 kHz, <=30 s | JSON `text` |
@@ -159,3 +165,28 @@ References: [Vercel FastAPI](https://vercel.com/docs/frameworks/backend/fastapi)
 [WebSockets](https://vercel.com/docs/functions/websockets),
 [Groq ASR](https://console.groq.com/docs/speech-to-text),
 [Mithi](https://huggingface.co/Oomni/mithi-v1-edge).
+
+## Speech recognition and conversation diagnostics
+
+Open **Conversation log** in Studio. Each robot turn shows the actual recognized
+text, full LLM messages (including the applied prompt), reply, generated speech
+phrases, timings, signal metrics and recognition metadata. The device reports
+I2S playback completion, errors, dropped packets and underruns. This confirms
+writes to its speaker interface; it is not a recording of the physical speaker.
+Input and generated-speech samples have independent authenticated audio players.
+The PC microphone test uses the same cloud recognition settings for comparison.
+Rechecking STT adds an alternative result without rewriting what was originally
+sent to the LLM. The retained sample can be shorter than the original utterance.
+
+Default cloud recognition is `whisper-large-v3`, automatic Bangla/English,
+700 ms end-of-question silence, light VAD and a 20-second question limit. Studio
+allows model, spoken language and vocabulary hints to be changed independently
+of the response language. Input DC removal and gain are bounded to avoid clipping;
+quality metadata is diagnostic, not a calibrated accuracy percentage.
+
+Firmware retains up to 20 seconds of microphone audio while the initial WSS
+connection opens, instead of discarding it. Later listening turns clear obsolete
+speaker-tail audio. Uplink Opus uses 24 kbit/s, and the microphone is muted while
+recognition/reply generation/playback is busy. The local real phoneme wake model
+and camera commands remain on the ESP32. Half-duplex operation still requires
+waiting for listening before speaking over an answer.

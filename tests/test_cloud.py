@@ -9,11 +9,13 @@ import wave
 import httpx
 from cloud.app import app
 from cloud.security import LOCAL_RATES
+from cloud.storage import Store
+from cloud import conversations
 
 
-class FakeStore:
+class FakeStore(Store):
     ready=True
-    def __init__(self): self.data={};self.hashes={}
+    def __init__(self): super().__init__();self.data={};self.hashes={}
     async def command(self,*args):
         cmd,*items=args
         if cmd=='GET': return self.data.get(items[0])
@@ -46,6 +48,7 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.env=patch.dict(os.environ,{'DESKTER_ADMIN_KEY':'admin-'+'a'*40,'DESKTER_DEVICE_KEY':'device-'+'b'*40})
         self.env.start();LOCAL_RATES.clear()
+        conversations.RECORDS.clear();conversations.AUDIO.clear()
         self.db=FakeStore()
         self.patches=[patch('cloud.app.store',self.db),patch('cloud.security.store',self.db)]
         for p in self.patches:p.start()
@@ -133,6 +136,27 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_voice_rejected_before_model_load(self):
         response=await self.client.post('/api/v1/speech',headers=self.device,json={'text':'Hello','voice':'imaginary'})
         self.assertEqual(response.status_code,422)
+
+    async def test_conversation_history_and_audio_are_admin_only(self):
+        record=conversations.new('bootstrap');record.update(heard='The actual input',llm_output='The actual reply')
+        await conversations.save(record)
+        await conversations.audio(record,'input',b'example-audio',1)
+        self.assertEqual((await self.client.get('/api/conversations')).status_code,401)
+        self.assertEqual((await self.client.get('/api/conversations',headers=self.device)).status_code,401)
+        response=await self.client.get('/api/conversations',headers=self.admin)
+        self.assertEqual(response.json()['turns'][0]['heard'],'The actual input')
+        path='/api/conversations/'+record['id']+'/audio/input'
+        self.assertEqual((await self.client.get(path,headers=self.device)).status_code,401)
+        self.assertEqual((await self.client.get(path,headers=self.admin)).content,b'example-audio')
+        self.assertEqual((await self.client.delete('/api/conversations',headers=self.admin)).status_code,200)
+        self.assertEqual((await self.client.get(path,headers=self.admin)).status_code,404)
+
+    async def test_playback_ack_cannot_modify_another_devices_turn(self):
+        record=conversations.new('one');await conversations.save(record)
+        await conversations.playback(record['id'],'two',{'state':'complete','packets':10})
+        self.assertEqual((await conversations.get(record['id']))['playback']['state'],'not_sent')
+        await conversations.playback(record['id'],'one',{'state':'complete','packets':10})
+        self.assertEqual((await conversations.get(record['id']))['status'],'playback_complete')
 
     async def test_redis_failure_does_not_claim_settings_were_saved(self):
         from fastapi import HTTPException

@@ -20,9 +20,11 @@ ROOT = Path(__file__).resolve().parent
 DEFAULTS = dict(mithi_voice='malini', speech_volume=100, response_language='auto',
     backchannels='auto', temperature=.3, groq_model='openai/gpt-oss-120b',
     groq_max_tokens=384, first_phrase_words=6,
-    following_phrase_words=12, silence_ms=400, max_utterance_seconds=12,
-    vad_mode=2, output_bitrate=48000, playback_prefill_frames=4,
-    log_transcripts=False)
+    following_phrase_words=12, silence_ms=700, max_utterance_seconds=20,
+    vad_mode=1, output_bitrate=48000, playback_prefill_frames=4,
+    log_transcripts=False, asr_model='whisper-large-v3', asr_language='auto',
+    asr_prompt='Bangla, English, Banglish. Mahin, Deskter, Dexter.',
+    conversation_history=True, capture_audio=True)
 
 
 class Settings(BaseModel):
@@ -43,6 +45,11 @@ class Settings(BaseModel):
     output_bitrate: int = Field(ge=24000, le=64000)
     playback_prefill_frames: int = Field(ge=1, le=4)
     log_transcripts: bool
+    asr_model: Literal['whisper-large-v3','whisper-large-v3-turbo']='whisper-large-v3'
+    asr_language: Literal['auto','bn','en']='auto'
+    asr_prompt: str=Field(default='Bangla, English, Banglish. Mahin, Deskter, Dexter.',max_length=600)
+    conversation_history: bool=True
+    capture_audio: bool=True
 
 
 class SaveRequest(BaseModel):

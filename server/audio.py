@@ -64,9 +64,9 @@ class OpusOutput:
 class Utterances:
     """20 ms VAD; pre-roll, short-sound rejection and bounded utterances."""
     def __init__(self, config):
-        self.vad = webrtcvad.Vad(config.get("vad_mode", 2))
-        self.silence_frames = max(10, config.get("silence_ms", 500) // 20)
-        self.limit = int(config.get("max_utterance_seconds", 12) * 50)
+        self.vad = webrtcvad.Vad(config.get("vad_mode", 1))
+        self.silence_frames = max(10, config.get("silence_ms", 700) // 20)
+        self.limit = int(config.get("max_utterance_seconds", 20) * 50)
         self.reset()
 
     def reset(self):
@@ -95,7 +95,7 @@ class Utterances:
             if self.silent >= self.silence_frames or len(self.frames) >= self.limit:
                 # Keep 100 ms of trailing silence rather than the entire hangover.
                 keep = len(self.frames) - max(0, self.silent - 5)
-                result = b"".join(self.frames[:keep]) if self.voiced >= 10 else None
+                result = b"".join(self.frames[:keep]) if self.voiced >= 6 else None
                 self.reset()
                 if result:
                     return np.frombuffer(result, dtype="<i2").astype(np.float32) / 32768.0

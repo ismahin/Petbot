@@ -7,6 +7,7 @@ from pathlib import Path
 import secrets
 import sys
 import time
+from contextlib import asynccontextmanager
 from typing import Literal
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -19,15 +20,25 @@ from dashboard import Settings, DEFAULTS, revision
 from cloud import provider, runtime
 from cloud.security import admin, admin_key, session_cookie, device, digest, new_key, limit
 from cloud.storage import store
+from cloud import conversations
+from cloud.recognition import prepare
 
-app=FastAPI(title='Deskter API',docs_url='/api/docs',openapi_url='/api/openapi.json',redoc_url=None)
+@asynccontextmanager
+async def lifespan(app):
+    if os.getenv('VERCEL') or os.getenv('MITHI_PRELOAD')=='1':
+        if os.getenv('MITHI_ENABLED','1')!='0':
+            await asyncio.to_thread(runtime.preload)
+    yield
+
+
+app=FastAPI(title='Deskter API',docs_url='/api/docs',openapi_url='/api/openapi.json',redoc_url=None,lifespan=lifespan)
 
 
 async def settings():
     data={**DEFAULTS,'system_prompt':(ROOT/'server/persona.txt').read_text(encoding='utf-8-sig')}
     data['groq_model']=os.getenv('GROQ_MODEL',data['groq_model'])
     if store.ready:
-        saved=await store.command('GET','deskter:settings')
+        saved=await store.get('deskter:settings')
         if saved:
             data.update(Settings.model_validate(json.loads(saved)).model_dump())
     return data
@@ -76,7 +87,8 @@ async def health():
     configured=bool(os.getenv('GROQ_API_KEY')) and len(os.getenv('DESKTER_ADMIN_KEY',''))>=32 and len(os.getenv('DESKTER_DEVICE_KEY',''))>=32
     return {'ready':configured,'deployment':'vercel-experimental','tts_loaded':runtime.MODEL is not None,
         'tts_enabled':os.getenv('MITHI_ENABLED','1')!='0','storage_configured':store.ready,
-        'groq_configured':bool(os.getenv('GROQ_API_KEY'))}
+        'groq_configured':bool(os.getenv('GROQ_API_KEY')),'storage_backend':store.backend,
+        'model_policy':'preload at instance startup; Vercel may recycle idle instances'}
 
 
 class Login(BaseModel):
@@ -125,13 +137,12 @@ async def save(body: Save,request: Request):
     if body.revision!=revision(old):
         raise HTTPException(409,'Settings changed. Reload before saving.')
     # Compare-and-set protects against simultaneous writes across instances.
-    script="local v=redis.call('GET',KEYS[1]); if (not v and ARGV[1]=='') or v==ARGV[1] then redis.call('SET',KEYS[1],ARGV[2]); return 1 else return 0 end"
-    current=await store.command('GET','deskter:settings')
+    current=await store.get('deskter:settings')
     if current:
         disk={**DEFAULTS,**json.loads(current)}
         if revision(disk)!=body.revision:
             raise HTTPException(409,'Settings changed. Reload before saving.')
-    result=await store.command('EVAL',script,1,'deskter:settings',current or '',json.dumps(values,ensure_ascii=False))
+    result=await store.cas('deskter:settings',current or '',json.dumps(values,ensure_ascii=False))
     if not result:
         raise HTTPException(409,'Settings changed. Reload before saving.')
     return {'revision':revision(values),'message':'Saved securely. Changes apply to the next request or listening window.'}
@@ -140,10 +151,11 @@ async def save(body: Save,request: Request):
 @app.get('/api/status')
 async def status(request: Request):
     admin(request);data=await settings()
-    return {'ready':True,'device_connected':False,'connection_tracking':False,'busy':False,
+    return {'ready':runtime.MODEL is not None,'device_connected':False,'connection_tracking':False,'busy':False,
         'provider':'groq','model':data['groq_model'],'voice':data['mithi_voice'],
         'speech_backend':'Mithi v1 Edge','speech_device':'CPU · lazy loading',
-        'emotion_control':False,'cloud':True,'storage_ready':store.ready}
+        'emotion_control':False,'cloud':True,'storage_ready':store.ready,'storage_backend':store.backend,
+        'tts_loaded':runtime.MODEL is not None,'asr_model':data['asr_model']}
 
 
 class Speech(BaseModel):
@@ -167,8 +179,7 @@ class DeviceName(BaseModel):
 @app.get('/api/devices')
 async def devices(request: Request):
     admin(request)
-    raw=await store.command('HGETALL','deskter:device-list')
-    values=dict(zip(raw[::2],raw[1::2])) if isinstance(raw,list) else raw or {}
+    values=await store.hgetall('deskter:device-list')
     return {'devices':[json.loads(value) for value in values.values()]}
 
 
@@ -178,8 +189,7 @@ async def add_device(body: DeviceName,request: Request):
     key=new_key();hashed=digest(key);identity=secrets.token_hex(8)
     record={'id':identity,'name':body.name,'created':int(time.time()),'fingerprint':hashed[:10]}
     # Store hashes only; the full device key is returned exactly once.
-    script="redis.call('HSET',KEYS[1],ARGV[1],ARGV[2]); redis.call('HSET',KEYS[2],ARGV[2],ARGV[3]); redis.call('HSET',KEYS[3],ARGV[2],ARGV[1]); return 1"
-    await store.command('EVAL',script,3,'deskter:keys','deskter:device-list','deskter:device-hashes',hashed,identity,json.dumps(record))
+    await store.create_device(hashed,identity,json.dumps(record))
     return {**record,'api_key':key}
 
 
@@ -188,8 +198,7 @@ async def revoke(identity: str,request: Request):
     admin(request)
     if len(identity)!=16 or any(c not in '0123456789abcdef' for c in identity):
         raise HTTPException(422,'Invalid device ID.')
-    script="local h=redis.call('HGET',KEYS[3],ARGV[1]); if h then redis.call('HDEL',KEYS[1],h); end; redis.call('HDEL',KEYS[2],ARGV[1]); redis.call('HDEL',KEYS[3],ARGV[1]); redis.call('DEL','deskter:history:'..ARGV[1]); return 1"
-    await store.command('EVAL',script,3,'deskter:keys','deskter:device-list','deskter:device-hashes',identity)
+    await store.revoke_device(identity)
     return {'revoked':True}
 
 
@@ -244,6 +253,8 @@ async def transcribe(request: Request):
 @app.post('/xiaozhi/ota/')
 async def configuration(request: Request):
     await device(request.headers)
+    if os.getenv('VERCEL') and os.getenv('MITHI_ENABLED','1')!='0':
+        await asyncio.to_thread(runtime.preload)
     host=request.url.netloc
     return {'websocket':{'url':f'wss://{host}/xiaozhi/v1/','version':1,
         'token':request.headers['authorization'].removeprefix('Bearer ')},
@@ -254,3 +265,76 @@ async def configuration(request: Request):
 async def websocket(socket: WebSocket):
     from cloud.websocket import serve
     await serve(socket,settings)
+
+
+@app.get('/api/conversations')
+async def conversation_list(request: Request):
+    admin(request)
+    return await conversations.recent()
+
+
+@app.delete('/api/conversations')
+async def clear_conversations(request: Request):
+    admin(request)
+    await conversations.clear()
+    return {'cleared':True}
+
+
+@app.get('/api/conversations/{identity}/audio/{kind}')
+async def conversation_audio(identity: str,kind: str,request: Request):
+    admin(request)
+    if len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity) or kind not in ('input','output'):
+        raise HTTPException(404,'Audio not found.')
+    data=await conversations.read_audio(identity,kind)
+    if not data:
+        raise HTTPException(404,'This diagnostic audio has expired or is unavailable on this instance.')
+    return Response(data,media_type='audio/wav')
+
+
+class RecognitionOptions(BaseModel):
+    model: Literal['whisper-large-v3','whisper-large-v3-turbo']='whisper-large-v3'
+    language: Literal['auto','bn','en']='auto'
+
+
+@app.post('/api/conversations/{identity}/retry-asr')
+async def retry_asr(identity: str,body: RecognitionOptions,request: Request):
+    admin(request);await limit('admin','asr-test',10)
+    record=await conversations.get(identity)
+    audio=await conversations.read_audio(identity,'input') if record else None
+    if not audio:
+        raise HTTPException(404,'No retained input audio is available for this turn.')
+    data=await settings();data.update(asr_model=body.model,asr_language=body.language)
+    result=await provider.recognize(audio,data)
+    record.setdefault('comparisons',[]).append(result)
+    record['comparisons']=record['comparisons'][-3:]
+    await conversations.save(record)
+    return result
+
+
+@app.post('/api/diagnostics/transcribe')
+async def microphone_test(request: Request):
+    admin(request);await limit('admin','asr-test',10)
+    import io
+    import wave
+    import numpy as np
+    body=await request.body()
+    try:
+        with wave.open(io.BytesIO(body),'rb') as wav:
+            if wav.getnchannels()!=1 or wav.getsampwidth()!=2 or wav.getframerate()!=16000 or not 1600<=wav.getnframes()<=480000:
+                raise ValueError()
+            pcm=wav.readframes(wav.getnframes())
+            if len(pcm)!=wav.getnframes()*2:raise ValueError()
+    except (wave.Error,ValueError,EOFError):
+        raise HTTPException(422,'Send a complete mono 16 kHz PCM16 WAV, 0.1..30 seconds.') from None
+    data=await settings()
+    samples=np.frombuffer(pcm,dtype='<i2').astype(np.float32)/32768
+    pcm,metrics=prepare(samples)
+    audio=runtime.wav(pcm,16000)
+    result=await provider.recognize(audio,data)
+    record=conversations.new('browser','browser');record.update(heard=result['text'],asr=result['metadata'],status='transcribed',metrics=metrics)
+    if data.get('conversation_history',True):
+        await conversations.save(record)
+        if data.get('capture_audio',True):
+            clip=pcm[:384000]
+            await conversations.audio(record,'input',runtime.wav(clip,16000),len(clip)/32000,len(clip)<len(pcm))
+    return {'id':record['id'],**result,'metrics':metrics}

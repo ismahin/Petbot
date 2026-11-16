@@ -63,6 +63,8 @@ uint8_t *encoded=nullptr;
 size_t inputBytes=0;
 String uuid,deviceId,wifiSsid,wifiPassword,wsUrl,wsToken,wsHeaders,sessionId;
 String activationCode;
+String playbackTurn;
+uint32_t turnReceived=0,turnErrors=0,turnDrops=0,turnUnderruns=0;
 String otaEndpoint=otaUrl,serverCa,serverAuth,serverNtp;
 bool portalActive=false,newWifi=false,ready=false,activating=false,wsStarted=false,helloReady=false,ttsEnding=false;
 unsigned protocolVersion=1;
@@ -201,7 +203,7 @@ int post(const char *suffix,const String &body,JsonDocument *result) {
     if(serverCa.isEmpty()) tls.setCACertBundle(deskterCaStart,size_t(deskterCaEnd-deskterCaStart));
     else tls.setCACert(serverCa.c_str());
     tls.setHandshakeTimeout(10);
-    HTTPClient http; http.setTimeout(12000); http.setConnectTimeout(10000); http.setReuse(false);
+    HTTPClient http; http.setTimeout(60000); http.setConnectTimeout(10000); http.setReuse(false);
     if (!http.begin(tls,otaEndpoint+suffix)) return -1;
     http.addHeader("Device-Id",deviceId); http.addHeader("Client-Id",uuid);
     http.addHeader("Activation-Version","1"); http.addHeader("Accept-Language","en-US");
@@ -295,9 +297,9 @@ void configureCloud() {
     // Firmware/asset URLs are intentionally unused: retain this Arduino hardware build.
 }
 
-void sendListening() {
+void sendListening(bool preserveWake=false) {
     if (!helloReady) return;
-    inputBytes=0; wakeaudio::discardPcm(); opus_encoder_ctl(encoder,OPUS_RESET_STATE);
+    inputBytes=0; if(!preserveWake) wakeaudio::discardPcm(); opus_encoder_ctl(encoder,OPUS_RESET_STATE);
     JsonDocument message; message["session_id"]=sessionId; message["type"]="listen";
     message["state"]="start"; message["mode"]="auto";
     String text; serializeJson(message,text); socketClient.sendTXT(text);
@@ -329,23 +331,25 @@ void socketEvent(WStype_t type,uint8_t *data,size_t length) {
             if(transport!="websocket" || format!="opus" || (message["audio_params"]["channels"] | 1)!=1) {
                 status("Unsupported server audio format"); return;
             }
-            sessionId=message["session_id"] | ""; helloReady=true; session::touch(); sendListening();
+            sessionId=message["session_id"] | ""; helloReady=true; session::touch(); sendListening(true);
             Serial.println("VOICE server hello accepted; live microphone streaming enabled");
         } else if(kind=="tts") {
             const String state=message["state"] | "";
             session::touch();
             if(state=="start") {
+                playbackTurn=message["turn_id"] | "";
+                turnReceived=audioReceived.load();turnErrors=audioErrors.load();turnDrops=playbackDrops.load();turnUnderruns=playbackUnderruns.load();
                 ++playbackEpoch;playbackLastWrite.store(0);playbackFinished.store(false);
                 wakeaudio::setSpeaking(true);ttsEnding=false;inputBytes=0;session::setVisual(session::Visual::Thinking);status("Preparing speech...");
             }
             else if(state=="stop") { playbackFinished.store(true);ttsEnding=true;ttsEnded=millis(); }
-            else if(state=="preparing" && !wakeaudio::speaking()) { session::touch();session::setVisual(session::Visual::Thinking); }
+            else if(state=="preparing") { session::touch();wakeaudio::setSpeaking(true);if(session::visual()!=session::Visual::Speaking) session::setVisual(session::Visual::Thinking); }
         } else if(kind=="device") {
             const String action=message["action"] | "";
             if(action=="camera_open") cameramode::request(true);
             else if(action=="camera_close") cameramode::request(false);
         } else if(kind=="stt") {
-            session::touch(); session::setVisual(session::Visual::Thinking); status("Heard you / thinking..."); Serial.println("VOICE real server transcription received (text not logged)");
+            session::touch(); wakeaudio::setSpeaking(true);session::setVisual(session::Visual::Thinking); status("Heard you / thinking..."); Serial.println("VOICE real server transcription received (text not logged)");
         } else if(kind=="alert" || kind=="error") {
             const String text=message["message"] | "Voice service alert"; session::setVisual(session::Visual::Error);status(text.c_str());
         }
@@ -581,15 +585,24 @@ void networkTask(void *) {
             if(helloReady && ttsEnding && millis()-ttsEnded>=200 &&
                uxQueueMessagesWaiting(playbackQueue)==0 && !playbackBusy.load() &&
                (!playbackLastWrite.load() || millis()-playbackLastWrite.load()>=150)) {
-                ttsEnding=false; wakeaudio::setSpeaking(false); sendListening();
+                ttsEnding=false;
+                if(playbackTurn.length()==32) {
+                    JsonDocument ack;ack["type"]="playback";ack["turn_id"]=playbackTurn;
+                    const uint32_t packets=audioReceived.load()-turnReceived,errors=audioErrors.load()-turnErrors,drops=playbackDrops.load()-turnDrops;
+                    ack["state"]=packets && !errors && !drops ? "complete" : "partial";
+                    ack["packets"]=packets;ack["errors"]=errors;ack["drops"]=drops;ack["underruns"]=playbackUnderruns.load()-turnUnderruns;
+                    String payload;serializeJson(ack,payload);socketClient.sendTXT(payload);playbackTurn="";
+                    Serial.printf("PLAYBACK device acknowledgement packets=%lu errors=%lu drops=%lu\n",(unsigned long)packets,(unsigned long)errors,(unsigned long)drops);
+                }
+                wakeaudio::setSpeaking(false); sendListening();
             }
-            if(helloReady && !wakeaudio::speaking()) transmitAudio(); else wakeaudio::discardPcm();
+            if(helloReady && !wakeaudio::speaking()) transmitAudio(); else if(wakeaudio::speaking()) wakeaudio::discardPcm();
             if(wsStarted && !helloReady && millis()-helloStarted>20000) {
                 socketClient.disconnect(); wsStarted=false; ready=false; nextConfig=millis()+5000;
             }
         } else {
             if(wsStarted) { socketClient.disconnect(); wsStarted=false; helloReady=false; wakeaudio::setSpeaking(false); }
-            wakeaudio::discardPcm(); inputBytes=0;
+            if(!session::active()) {wakeaudio::discardPcm();inputBytes=0;}
             if(ready && !portalActive && session::visual()!=session::Visual::Error) session::setVisual(session::Visual::Idle);
         }
         if(millis()-lastReport>=5000) {
@@ -662,7 +675,7 @@ bool begin() {
     int error=0;
     encoder=opus_encoder_create(16000,1,OPUS_APPLICATION_VOIP,&error);
     if(!encoder || error!=OPUS_OK) return false;
-    opus_encoder_ctl(encoder,OPUS_SET_BITRATE(16000)); opus_encoder_ctl(encoder,OPUS_SET_COMPLEXITY(0));
+    opus_encoder_ctl(encoder,OPUS_SET_BITRATE(24000)); opus_encoder_ctl(encoder,OPUS_SET_COMPLEXITY(0));
     decoder=opus_decoder_create(24000,1,&error);
     if(!decoder || error!=OPUS_OK) return false;
     inputPcm=static_cast<int16_t *>(heap_caps_malloc(1920,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));

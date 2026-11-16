@@ -11,8 +11,11 @@ from cloud import provider, runtime
 from cloud.security import device, limit
 from cloud.storage import store
 from cloud.device_commands import camera_command
+from cloud import conversations
+from cloud.recognition import prepare
 
 ACTIVE = set()
+CAMERA_BN = {'camera_open': 'ক্যামেরা চালু হচ্ছে।', 'camera_close': 'ক্যামেরা বন্ধ হচ্ছে।'}
 
 
 async def serve(socket, get_settings):
@@ -28,7 +31,7 @@ async def serve(socket, get_settings):
     lease=False
     try:
         if store.ready:
-            lease=await store.command('SET','deskter:session:'+identity,ownership,'NX','EX',260)
+            lease=await store.set('deskter:session:'+identity,ownership,ttl=260,nx=True)
             if not lease:
                 await socket.close(1013);return
         await socket.accept()
@@ -40,7 +43,7 @@ async def serve(socket, get_settings):
         decoder=OpusInput();segmenter=Utterances(config)
         session_id=str(uuid.uuid4());history=[];listening=False;turn_task=None
         if store.ready:
-            raw=await store.command('GET','deskter:history:'+identity)
+            raw=await store.get('deskter:history:'+identity)
             if raw:
                 history=json.loads(raw)[-8:]
 
@@ -49,28 +52,53 @@ async def serve(socket, get_settings):
 
         async def respond(samples):
             current=await get_settings()
+            record=conversations.new(identity)
+            enabled=current.get('conversation_history',True)
+            started=time.monotonic();input_task=None
+            async def event(kind,**fields):
+                await message(kind,turn_id=record['id'],**fields)
+            async def save():
+                if enabled:await conversations.save(record)
             async def heartbeat():
                 while True:
                     await asyncio.sleep(15)
-                    await message('tts',state='preparing')
+                    await event('tts',state='preparing')
             heartbeat_task=asyncio.create_task(heartbeat())
             try:
-                await message('tts',state='preparing')
+                await event('tts',state='preparing')
                 await limit(identity,'voice-turn',10)
-                audio=runtime.wav((np.clip(samples,-1,1)*32767).astype('<i2').tobytes(),16000)
-                text=await provider.transcribe(audio)
+                pcm,record['metrics']=prepare(samples)
+                audio=runtime.wav(pcm,16000)
+                await save()
+                if enabled and current.get('capture_audio',True):
+                    clip=pcm[:16000*2*12]
+                    input_task=asyncio.create_task(conversations.audio(record,'input',runtime.wav(clip,16000),len(clip)/32000,len(pcm)>len(clip)))
+                began_asr=time.monotonic()
+                recognized=await provider.recognize(audio,current)
+                text=recognized['text'];record['heard']=text;record['asr']=recognized['metadata']
+                record['timing']['asr_seconds']=round(time.monotonic()-began_asr,3)
+                record['status']='thinking' if text else 'no_speech'
+                await event('stt',text=text)
+                await save()
+                action=camera_command(text) if text else None
                 if not text:
-                    return
-                await message('stt',text=text)
-                action=camera_command(text)
-                if action:
-                    await message('device',action=action)
+                    reply={'text':'I did not hear that clearly. Please try again.','emotion':'neutral'}
+                    record['response_source']='clarification'
+                elif action:
+                    await event('device',action=action)
                     bangla=any('\u0980'<=c<='\u09ff' for c in text)
-                    confirmation=('ক্যামেরা চালু হচ্ছে।' if bangla else 'Opening the camera.') if action=='camera_open' else ('ক্যামেরা বন্ধ হচ্ছে।' if bangla else 'Closing the camera.')
+                    confirmation=CAMERA_BN[action] if bangla else ('Opening the camera.' if action=='camera_open' else 'Closing the camera.')
                     reply={'text':confirmation,'emotion':'neutral'}
+                    record['response_source']='device_command'
                 else:
+                    record['llm_input']=provider.chat_messages(text,history,current)
+                    began_llm=time.monotonic()
                     reply=await provider.chat(text,history,current)
-                await message('llm',emotion=reply['emotion'])
+                    record['timing']['llm_seconds']=round(time.monotonic()-began_llm,3)
+                    record['response_source']='llm'
+                record['llm_output']=reply['text'];record['emotion']=reply['emotion'];record['status']='generating_speech'
+                await save()
+                await event('llm',emotion=reply['emotion'])
                 chunks=JsonSpeechChunks(sentence_mode=True,split_commas=True,
                     first_sentence_words=current['first_phrase_words'],
                     max_sentence_words=current['following_phrase_words'],min_sentence_words=3,min_clause_words=3)
@@ -83,6 +111,7 @@ async def serve(socket, get_settings):
                         await queue.put((phrase.text,pcm))
                     await queue.put(None)
 
+                generated_audio=bytearray()
                 async def play():
                     encoder=OpusOutput(bitrate=current['output_bitrate'])
                     started=False;deadline=None;sent=0
@@ -95,13 +124,20 @@ async def serve(socket, get_settings):
                             await asyncio.sleep(max(0,deadline-time.monotonic()))
                         await socket.send_bytes(packet)
                         sent+=1
+                        record['playback']={'state':'streaming','packets_sent':sent}
                         if sent>=prefill:
                             deadline=max(deadline,time.monotonic()-.12)+.06
                     while (item:=await queue.get()) is not None:
                         phrase,pcm=item
+                        record['speech_text'].append(phrase)
+                        if current.get('capture_audio',True):
+                            remaining=24000*2*12-len(generated_audio)
+                            if remaining>0:generated_audio.extend(pcm[:remaining])
                         if not started:
-                            await message('tts',state='start');started=True
-                        await message('tts',state='sentence_start',text=phrase)
+                            record['status']='speaking'
+                            await save()
+                            await event('tts',state='start');started=True
+                        await event('tts',state='sentence_start',text=phrase)
                         for packet in encoder.encode(np.frombuffer(pcm,dtype='<i2')):
                             await send(packet)
                     for packet in encoder.finish():
@@ -109,28 +145,43 @@ async def serve(socket, get_settings):
                     await asyncio.sleep(.24)
                 async with asyncio.TaskGroup() as group:
                     group.create_task(generate());group.create_task(play())
-                history.extend([{'role':'user','content':text},{'role':'assistant','content':reply['text']}])
-                del history[:-8]
-                if store.ready:
-                    await store.command('SET','deskter:history:'+identity,json.dumps(history,ensure_ascii=False),'EX',3600)
+
+                if enabled and generated_audio:
+                    await conversations.audio(record,'output',runtime.wav(bytes(generated_audio)),len(generated_audio)/48000,len(generated_audio)>=24000*2*12)
+                if text:
+                    history.extend([{'role':'user','content':text},{'role':'assistant','content':reply['text']}])
+                    del history[:-8]
+                    if store.ready:
+                        await store.set('deskter:history:'+identity,json.dumps(history,ensure_ascii=False),ttl=3600)
+                record['status']='sent';record['playback']={'state':'sent'}
             except asyncio.CancelledError:
+                record['status']='interrupted'
                 raise
-            except Exception:
+            except Exception as error:
+                record['status']='error'
+                record['error']=error.detail if isinstance(error,HTTPException) else 'Voice processing failed ('+type(error).__name__+').'
                 with suppress(Exception):
-                    await message('error',message='Voice service unavailable. Please retry shortly.')
+                    await event('error',message=record['error'])
             finally:
                 heartbeat_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await heartbeat_task
+                if input_task:
+                    with suppress(Exception,asyncio.CancelledError):await input_task
+                record['timing']['total_seconds']=round(time.monotonic()-started,3)
+                with suppress(Exception):await save()
                 segmenter.reset()
                 with suppress(Exception):
-                    await message('tts',state='stop')
+                    await event('tts',state='stop')
 
         began=time.monotonic()
         hello=False
         try:
             while time.monotonic()-began<240:
-                event=await asyncio.wait_for(socket.receive(),timeout=min(30,240-(time.monotonic()-began)))
+                try:
+                    event=await asyncio.wait_for(socket.receive(),timeout=min(30,max(.1,240-(time.monotonic()-began))))
+                except TimeoutError:
+                    continue
                 if event['type']=='websocket.disconnect':
                     break
                 if event.get('text') is not None:
@@ -147,6 +198,15 @@ async def serve(socket, get_settings):
                     elif data.get('type')=='listen' and hello:
                         listening=data.get('state')=='start'
                         config=await get_settings();segmenter=Utterances(config)
+                    elif data.get('type')=='playback' and hello:
+                        turn_id=data.get('turn_id','')
+                        state=data.get('state')
+                        if isinstance(turn_id,str) and len(turn_id)==32 and state in ('complete','partial','error'):
+                            details={'state':state}
+                            for key in ('packets','errors','drops','underruns'):
+                                value=data.get(key,0)
+                                details[key]=max(0,min(100000,value)) if type(value) is int else 0
+                            with suppress(Exception):await conversations.playback(turn_id,identity,details)
                     elif data.get('type')=='abort' and turn_task:
                         turn_task.cancel()
                         with suppress(asyncio.CancelledError):
@@ -176,4 +236,4 @@ async def serve(socket, get_settings):
         ACTIVE.discard(identity)
         if lease:
             with suppress(Exception):
-                await store.command('EVAL',"if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end",1,'deskter:session:'+identity,ownership)
+                await store.release('deskter:session:'+identity,ownership)

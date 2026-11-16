@@ -51,7 +51,7 @@ async def device(headers):
     if len(bootstrap)>=32 and hmac.compare_digest(key,bootstrap):
         return 'bootstrap'
     if store.ready:
-        identity = await store.command('HGET','deskter:keys',digest(key))
+        identity = await store.hget('deskter:keys',digest(key))
         if identity:
             return identity
     raise HTTPException(401, 'Invalid or revoked device key.')
@@ -60,9 +60,9 @@ async def device(headers):
 async def limit(identity, kind='request', maximum=20):
     if store.ready:
         key=f'deskter:rate:{kind}:{digest(identity)}:{int(time.time())//60}'
-        value=await store.command('INCR',key)
+        value=await store.increment(key)
         if value==1:
-            await store.command('EXPIRE',key,120)
+            await store.expire(key,120)
         if int(value)>maximum:
             raise HTTPException(429,'Request limit reached. Try again in a minute.',headers={'Retry-After':'60'})
     else:
